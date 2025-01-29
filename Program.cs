@@ -46,40 +46,85 @@
     }
 
     /// <summary>
-    /// Is not ready right now -----------------------
+    /// for future ------------------
     /// </summary>
-    public static class Criterion
+    public class Activation
     {
-        /// <summary>
-        /// Small incrementing of argument for calculation of derived function in point
-        /// </summary>
-        private static decimal _delta = 0.00001M;
 
-        /// <summary>
-        /// Returns value of quadratic error
-        /// </summary>
-        /// <returns></returns>
-        public static decimal QuadraticError(decimal predict, decimal perfect)
-        {
-            var err = predict - perfect;
-            err *= err;
-            return err / 2;
-        }
-
-        /// <summary>
-        /// Returns value of quadratic error
-        /// </summary>
-        /// <returns></returns>
-        public static decimal GetQuadraticErrorDerivative(decimal currentValue, decimal currentError) =>
-            currentError * currentValue * (1 - currentValue);
     }
 
     /// <summary>
-    /// For future ----------------------
+    /// Provides learning of NN
     /// </summary>
-    public class Optimizer(decimal lr)
+    public class Optimizer
     {
-        public decimal LearningRate = lr;
+        /// <summary>
+        /// Learning rate
+        /// </summary>
+        public decimal LearningRate;
+
+        /// <summary>
+        /// Calculate error of prediction
+        /// </summary>
+        /// <param name="output">output value of neuron</param>
+        /// <param name="right">right value</param>
+        /// <returns></returns>
+        public virtual decimal Error(decimal output, decimal right)
+        {
+            return 0;
+        }
+
+        /// <summary>
+        /// Calculate criterion value of prediction
+        /// </summary>
+        /// <param name="output">output value of neuron</param>
+        /// <param name="right">right value</param>
+        /// <returns></returns>
+        public virtual decimal CriterionValue(decimal output, decimal right)
+        {
+            return 0;
+        }
+
+        /// <summary>
+        /// Calculate criterion value of prediction
+        /// </summary>
+        /// <param name="error">error of neuron</param>
+        /// <returns></returns>
+        public virtual decimal Derivative(decimal error)
+        {
+            return 0;
+        }
+
+        /// <summary>
+        /// Create instance of optimizer
+        /// </summary>
+        public Optimizer(decimal lr) => LearningRate = lr;
+    }
+
+    /// <summary>
+    /// Optimize by least square's method
+    /// </summary>
+    public class LeastSquareOptimizer : Optimizer
+    {
+        public override decimal Error(decimal output, decimal right) => output - right;
+
+        public override decimal CriterionValue(decimal output, decimal right)
+        {
+            var error = output - right;
+            error *= error;
+            error /= 2;
+            return error;
+        }
+
+        public override decimal Derivative(decimal error) => error;
+
+        /// <summary>
+        /// Create instance of optimizer
+        /// </summary>
+        public LeastSquareOptimizer(decimal lr) : base(lr)
+        {
+
+        }
     }
 
     /// <summary>
@@ -180,6 +225,11 @@
     public class Neuron
     {
         /// <summary>
+        /// The net in witch this neuron is located
+        /// </summary>
+        public Net OwnerNet;
+
+        /// <summary>
         /// Current input value of neuron
         /// </summary>
         public decimal Input = 0;
@@ -271,16 +321,16 @@
         /// Set derivative
         /// </summary>
         /// <returns></returns>
-        public virtual void SetDerivative() => Derivative = Error * Output * (1 - Output);
+        public virtual void SetDerivative() => Derivative = OwnerNet.Optimizer.Derivative(Error) * Output * (1 - Output);
 
         /// <summary>
         /// Update weights
         /// </summary>
         /// <param name="net">Current NN which possess current Neuron</param>
-        public virtual void UpdateWeights(Net net)
+        public virtual void UpdateWeights()
         {
             SetDerivative();
-            var lr = net.LearningRate;
+            var lr = OwnerNet.Optimizer.LearningRate;
             foreach (Connection i in InputConnections)
             {
                 i.UpdateWeight(lr, Derivative);
@@ -294,10 +344,10 @@
     /// </summary>
     public class ConvolutionalNeuron : Neuron
     {
-        public override void UpdateWeights(Net net)
+        public override void UpdateWeights()
         {
             SetDerivative();
-            var lr = net.LearningRate / InputConnections.Count;
+            var lr = OwnerNet.Optimizer.LearningRate / InputConnections.Count;
             foreach (Connection i in InputConnections)
             {
                 i.UpdateWeight(lr, Derivative);
@@ -343,11 +393,8 @@
         public virtual void SetWeights(decimal[] weights)
         {
             ArgumentNullException.ThrowIfNull(weights, nameof(weights));
-
             if (weights.Length != Weights.Length)
-            {
                 throw new NNException("Weights' size is not equal count of Layer.Weights.Length");
-            }
 
             for (int i = 0; i < weights.Length; i++)
                 Weights[i].Value = weights[i];
@@ -443,7 +490,12 @@
         /// <param name="net">Net whith contains that layer</param>
         public virtual void UpdateWeights(Net net)
         {
-            foreach (Neuron i in Neurons) i.UpdateWeights(net);
+            foreach (Neuron i in Neurons) i.UpdateWeights();
+        }
+
+        public virtual void SetOwnerNet(Net ownerNet)
+        {
+            foreach (Neuron neuron in Neurons) neuron.OwnerNet = ownerNet;
         }
     }
 
@@ -473,6 +525,7 @@
         public override void InitializeConnections(Layer nextLayer)
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
+
             int countOfWeights = Size[0] * nextLayer.Neurons.Length;
             Weights = new Variable[countOfWeights];
             for (int i = 0; i < countOfWeights; i++) Weights[i] = new Variable();
@@ -567,6 +620,7 @@
             int rowSteps = (int)Math.Ceiling((decimal)((2 * Padding + Size[1] - MaskSize + 1) / Stride));
             int columnSteps = (int)Math.Ceiling((decimal)((2 * Padding + Size[2] - MaskSize + 1) / Stride));
             for (int i = 0; i < weightsCount; i++) Weights[i] = new Variable(RandomGenerator.Next());
+
             for (int inputChannel = 0; inputChannel < Size[0]; inputChannel++)
             {
                 for (int maskNumber = 0; maskNumber < CountOfMasks; maskNumber++)
@@ -617,7 +671,7 @@
         /// <summary>
         /// Learning rate --------------------------
         /// </summary>
-        public decimal LearningRate;
+        public Optimizer Optimizer;
 
         /// <summary>
         /// Current architeture of neural network
@@ -628,9 +682,13 @@
         /// Create new instance of network
         /// </summary>
         /// <param name="layers">Layers of NN</param>
-        public Net(params Layer[] layers)
+        public Net(Optimizer optimizer, params Layer[] layers)
         {
+            ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
+
+            this.Optimizer = optimizer;
             Layers = new List<Layer>(layers);
+            foreach (Layer layer in layers) layer.SetOwnerNet(this);
             for (int i = 0; i < Layers.Count - 1; i++)
                 Layers[i].InitializeConnections(Layers[i + 1]);
         }
@@ -763,11 +821,9 @@
             var l1 = new ConvolutionLayer(6, 6, 1, 3, 1, 2, 1);
             var l2 = new LinearLayer(9, 2);
             var l3 = new LinearLayer(2, 2);
-            var net = new Net(l1, l2, l3)
-            {
-                LearningRate = 1
-            };
-            l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
+            var opt = new LeastSquareOptimizer(1);
+            var net = new Net(opt, l1, l2, l3);
+            //l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
 
             var input = new decimal[] {
             0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M,
@@ -782,7 +838,6 @@
             var stopw = new Stopwatch();
             stopw.Start();
             for (int i = 0; i < 10; i++)
-
                 net.Train(input, right);
 
             stopw.Stop();
@@ -824,10 +879,8 @@
             var l1 = new LinearLayer(2, 2);
             var l2 = new LinearLayer(2, 2);
             var l3 = new LinearLayer(2, 2);
-            var net = new Net(l1, l2, l3)
-            {
-                LearningRate = 1
-            };
+            var opt = new LeastSquareOptimizer(1);
+            var net = new Net(opt, l1, l2, l3);
             l1.SetWeights([0.5M, 0.7M, 0.4M, 0.6M]);
             l2.SetWeights([0.3M, 0.6M, 0.4M, 0.5M]);
 
