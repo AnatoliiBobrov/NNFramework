@@ -1,11 +1,25 @@
 ﻿namespace NNFramework
 {
+    using System.Diagnostics;
+
+    /// <summary>
+    /// Provides exceptions of this module
+    /// </summary>
     public class NNException : Exception
     {
+        /// <summary>
+        /// Create new exception with message from object
+        /// </summary>
+        /// <param name="message">either object that has ToString() method</param>
         public NNException(object message) : base(message.ToString())
         {
         }
 
+        /// <summary>
+        /// Create new exception with message from object and inner exception
+        /// </summary>
+        /// <param name="message">either object that has ToString() method</param>
+        /// <param name="innerException">inner exception</param>
         public NNException(object message, Exception? innerException) : base(message.ToString(), innerException)
         {
         }
@@ -59,7 +73,6 @@
         public static decimal GetQuadraticErrorDerivative(decimal currentValue, decimal currentError) =>
             currentError * currentValue * (1 - currentValue);
     }
-
 
     /// <summary>
     /// For future ----------------------
@@ -199,7 +212,7 @@
         /// <summary>
         /// Get values to next layer
         /// </summary>
-        public void GoForward()
+        public virtual void GoForward()
         {
             if (OutputConnections.Count != 0)
                 foreach (Connection i in OutputConnections)
@@ -209,7 +222,7 @@
         /// <summary>
         /// Calculate an output value
         /// </summary>
-        public void Activation()
+        public virtual void Activation()
         {
             if (InputConnections.Count != 0)
             {
@@ -226,7 +239,7 @@
         /// Add output connection
         /// </summary>
         /// <param name="connection">connection from this neuron</param>
-        public void AddOutputConnection(Connection connection)
+        public virtual void AddOutputConnection(Connection connection)
         {
             ArgumentNullException.ThrowIfNull(connection, nameof(connection));
             OutputConnections.Add(connection);
@@ -236,7 +249,7 @@
         /// Add input connection
         /// </summary>
         /// <param name="connection">connection to this neuron</param>
-        public void AddInputConnection(Connection connection)
+        public virtual void AddInputConnection(Connection connection)
         {
             ArgumentNullException.ThrowIfNull(connection, nameof(connection));
             InputConnections.Add(connection);
@@ -245,7 +258,7 @@
         /// <summary>
         /// Set errors
         /// </summary>
-        public void SetErrors()
+        public virtual void SetErrors()
         {
             if (OutputConnections.Count == 0)
                 throw new NNException("This neurons has not output connections");
@@ -258,16 +271,33 @@
         /// Set derivative
         /// </summary>
         /// <returns></returns>
-        public void SetDerivative() => Derivative = Error * Output * (1 - Output);
+        public virtual void SetDerivative() => Derivative = Error * Output * (1 - Output);
 
         /// <summary>
         /// Update weights
         /// </summary>
         /// <param name="net">Current NN which possess current Neuron</param>
-        public void UpdateWeights(Net net)
+        public virtual void UpdateWeights(Net net)
         {
             SetDerivative();
             var lr = net.LearningRate;
+            foreach (Connection i in InputConnections)
+            {
+                i.UpdateWeight(lr, Derivative);
+            }
+        }
+    }
+
+
+    /// <summary>
+    /// Provides methods for convolutional neurons
+    /// </summary>
+    public class ConvolutionalNeuron : Neuron
+    {
+        public override void UpdateWeights(Net net)
+        {
+            SetDerivative();
+            var lr = net.LearningRate / InputConnections.Count;
             foreach (Connection i in InputConnections)
             {
                 i.UpdateWeight(lr, Derivative);
@@ -453,7 +483,7 @@
                 for (int end = 0; end < nextLayer.Neurons.Length; end++)
                 {
                     var endNeuron = nextLayer.Neurons[end];
-                    var connection = new Connection(beginNeuron, endNeuron, Weights[begin * Size[0] + end]);
+                    var connection = new Connection(beginNeuron, endNeuron, Weights[begin * nextLayer.Neurons.Length + end]);
                     beginNeuron.AddOutputConnection(connection);
                     endNeuron.AddInputConnection(connection);
                 }
@@ -524,7 +554,7 @@
             Size = [countOfChannels, countOfRows, countOfColumns];
             Neurons = new Neuron[_size];
             for (int i = 0; i < _size; i++)
-                Neurons[i] = new Neuron();
+                Neurons[i] = new ConvolutionalNeuron();
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -731,20 +761,13 @@
         {
             string Value = "";
             var l1 = new ConvolutionLayer(6, 6, 1, 3, 1, 2, 1);
-            var l2 = new LinearLayer(9, 9);
-            var net = new Net(l1, l2)
+            var l2 = new LinearLayer(9, 2);
+            var l3 = new LinearLayer(2, 2);
+            var net = new Net(l1, l2, l3)
             {
                 LearningRate = 1
             };
-            l1.SetWeights([0.1M,
-                0.2M,
-                0.3M,
-                0.4M,
-                0.5M,
-                0.6M,
-                0.7M,
-                0.8M,
-                0.9M]);
+            l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
 
             var input = new decimal[] {
             0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M,
@@ -754,15 +777,19 @@
             0.1M, 0.5M, 0.1M, 0.4M, 0.6M, 0.5M,
             0.9M, 0.2M, 0.4M, 0.9M, 0.6M, 0.9M
             };
-            //var right = new decimal[] { 0.5M, 0.9M };
+            var right = new decimal[] { 0.5M, 0.9M };
 
-            //for (int i = 0; i < 100; i++)
+            var stopw = new Stopwatch();
+            stopw.Start();
+            for (int i = 0; i < 10; i++)
 
-            //    net.Train(input, right);
+                net.Train(input, right);
 
+            stopw.Stop();
+            Console.WriteLine(stopw.Elapsed.ToString());
             var output = net.Output(input);
-            //net.ClearErrors();
-            //net.SetErrors(right);
+            net.ClearErrors();
+            net.SetErrors(right);
 
             for (int i = 0; i < output.Length; i++)
             {
@@ -783,16 +810,17 @@
                 Value += ' ' + l1.Neurons[0].OutputConnections[i].Weight.Value.ToString();
             }
             Console.WriteLine(Value);
+            
         }
 
     }
 
     public class MyNet_
     {
-        public string Value;
 
-        public MyNet_()
+        public static void Main111()
         {
+            string Value = "";
             var l1 = new LinearLayer(2, 2);
             var l2 = new LinearLayer(2, 2);
             var l3 = new LinearLayer(2, 2);
