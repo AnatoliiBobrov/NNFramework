@@ -46,11 +46,93 @@
     }
 
     /// <summary>
-    /// for future ------------------
+    /// Provides methods for logistical function
     /// </summary>
     public class Activation
     {
+        /// <summary>
+        /// Return value calculated from input argument
+        /// </summary>
+        /// <param name="input">argument of function</param>
+        /// <returns></returns>
+        public virtual decimal Calculate(decimal input)
+        {
+            return 0;
+        }
 
+        /// <summary>
+        /// Return value of derived function in point
+        /// </summary>
+        /// <param name="point">point of function</param>
+        /// <returns></returns>
+        public virtual decimal Derived(decimal point)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Sigmoid activation function
+    /// </summary>
+    public class SigmoidActivation : Activation
+    {
+        public override decimal Calculate(decimal input) =>
+            (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * input))));
+
+        /// <summary>
+        /// Return value of derived function in point by current value of function
+        /// </summary>
+        /// <param name="CurrentValue">current value of function</param>
+        /// <returns></returns>
+        public override decimal Derived(decimal CurrentValue) =>
+            CurrentValue * (1 - CurrentValue);
+    }
+
+    /// <summary>
+    /// Leaky ReLU activation function
+    /// </summary>
+    public class LeakyReLUActivation : Activation
+    {
+        /// <summary>
+        /// Value of negative rate
+        /// </summary>
+        private decimal _value;
+
+        /// <summary>
+        /// Create new instance of function with negative rate
+        /// </summary>
+        /// <param name="value">negative rate</param>
+        public LeakyReLUActivation(decimal value) => _value = value;
+
+        public override decimal Calculate(decimal input)
+        {
+            if (input > 0) return input;
+            else return _value * input;
+        }  
+           
+        public override decimal Derived(decimal point)
+        {
+            if (point > 0) return 1;
+            else return _value;
+        }
+    }
+
+    /// <summary>
+    /// ReLU activation function
+    /// </summary>
+    public class ReLUActivation : Activation
+    {
+        public override decimal Calculate(decimal input)
+        {
+            if (input > 0) return input;
+            else return 0;
+        }
+
+        public override decimal Derived(decimal point)
+        {
+            if (point > 0) return 1;
+            else return 0;
+        }
     }
 
     /// <summary>
@@ -230,6 +312,11 @@
         public Net OwnerNet;
 
         /// <summary>
+        /// Logistical function of neuron
+        /// </summary>
+        public Activation ActivationFunction;
+
+        /// <summary>
         /// Current input value of neuron
         /// </summary>
         public decimal Input = 0;
@@ -260,6 +347,13 @@
         public List<Connection> OutputConnections = [];
 
         /// <summary>
+        /// Create instance ot neuron 
+        /// </summary>
+        /// <param name="function">Logistic function</param>
+        public Neuron(Activation function) =>
+            ActivationFunction = function;
+
+        /// <summary>
         /// Get values to next layer
         /// </summary>
         public virtual void GoForward()
@@ -276,7 +370,7 @@
         {
             if (InputConnections.Count != 0)
             {
-                Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * Input))));
+                Output = ActivationFunction.Calculate(Input);
             }
             else
             {
@@ -321,7 +415,7 @@
         /// Set derivative
         /// </summary>
         /// <returns></returns>
-        public virtual void SetDerivative() => Derivative = OwnerNet.Optimizer.Derivative(Error) * Output * (1 - Output);
+        public virtual void SetDerivative() => Derivative = OwnerNet.Optimizer.Derivative(Error) * ActivationFunction.Derived(Output);
 
         /// <summary>
         /// Update weights
@@ -344,6 +438,14 @@
     /// </summary>
     public class ConvolutionalNeuron : Neuron
     {
+        /// <summary>
+        /// Create instance ot neuron 
+        /// </summary>
+        /// <param name="function">Logistic function</param>
+        public ConvolutionalNeuron(Activation function) : base(function)
+        {
+        }
+
         public override void UpdateWeights()
         {
             SetDerivative();
@@ -364,6 +466,11 @@
         /// Array of all weights
         /// </summary>
         public Variable[] Weights;
+
+        /// <summary>
+        /// Logistical function of neuron
+        /// </summary>
+        public Activation ActivationFunction;
 
         /// <summary>
         /// Size of array of neurons
@@ -507,9 +614,13 @@
         /// <summary>
         /// Create new layer of neurons
         /// </summary>
-        /// <param name="size">count of neurons</param>
-        public LinearLayer(int inputSize, int outputSize)
+        /// <param name="inputSize">count of neurons</param>
+        /// <param name="outputSize">count of neurons in next layer</param>
+        /// <param name="function">logistic function</param>
+        /// <exception cref="NNException"></exception>
+        public LinearLayer(Activation function, int inputSize, int outputSize)
         {
+            ArgumentNullException.ThrowIfNull(function, nameof(function));
             if (inputSize < 1)
                 throw new NNException("Input size of neural network can not be less than 1");
             if (outputSize < 1)
@@ -519,7 +630,7 @@
             Outputs = new Variable[outputSize];
             for (int i = 0; i < outputSize; i++) Outputs[i] = new Variable(0);
             Neurons = new Neuron[inputSize];
-            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron();
+            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron(function);
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -588,8 +699,9 @@
         /// <param name="countOfMasks">count of mask per channel</param>
         /// <param name="stride">stride of convolution</param>
         /// <param name="padding">zero padding of edges</param>
-        public ConvolutionLayer(int countOfRows, int countOfColumns, int countOfChannels = 1, int maskSize = 3, int countOfMasks = 3, int stride = 1, int padding = 0)
+        public ConvolutionLayer(Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int maskSize = 3, int countOfMasks = 3, int stride = 1, int padding = 0)
         {
+            ArgumentNullException.ThrowIfNull(function, nameof(function));
             if (countOfChannels < 1) throw new NNException("'countOfChannels' can not be less than 1");
             if (countOfRows < 1) throw new NNException("'countOfRows' can not be less than 1");
             if (countOfColumns < 1) throw new NNException("'countOfColumns' can not be less than 1");
@@ -607,7 +719,7 @@
             Size = [countOfChannels, countOfRows, countOfColumns];
             Neurons = new Neuron[_size];
             for (int i = 0; i < _size; i++)
-                Neurons[i] = new ConvolutionalNeuron();
+                Neurons[i] = new ConvolutionalNeuron(function);
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -661,15 +773,13 @@
         }
     }
 
-
-
     /// <summary>
     /// Provides methods for neural network
     /// </summary>
     public class Net
     {
         /// <summary>
-        /// Learning rate --------------------------
+        /// Optimizer
         /// </summary>
         public Optimizer Optimizer;
 
@@ -818,13 +928,14 @@
         public static void Main()
         {
             string Value = "";
-            var l1 = new ConvolutionLayer(6, 6, 1, 3, 1, 2, 1);
-            var l2 = new LinearLayer(9, 2);
-            var l3 = new LinearLayer(2, 2);
+            var sigm = new SigmoidActivation();
+            var l1 = new ConvolutionLayer(sigm, 6, 6, 1, 3, 1, 2, 1);
+            var l2 = new LinearLayer(sigm, 9, 2);
+            var l3 = new LinearLayer(sigm, 2, 2);
             var opt = new LeastSquareOptimizer(1);
             var net = new Net(opt, l1, l2, l3);
-            //l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
-
+            l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
+            l2.SetWeights(new decimal[] {0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M, 0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M} );
             var input = new decimal[] {
             0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M,
             0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M,
@@ -876,9 +987,10 @@
         public static void Main111()
         {
             string Value = "";
-            var l1 = new LinearLayer(2, 2);
-            var l2 = new LinearLayer(2, 2);
-            var l3 = new LinearLayer(2, 2);
+            var sigm = new SigmoidActivation();
+            var l1 = new LinearLayer(sigm, 2, 2);
+            var l2 = new LinearLayer(sigm, 2, 2);
+            var l3 = new LinearLayer(sigm, 2, 2);
             var opt = new LeastSquareOptimizer(1);
             var net = new Net(opt, l1, l2, l3);
             l1.SetWeights([0.5M, 0.7M, 0.4M, 0.6M]);
