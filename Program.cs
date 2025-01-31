@@ -244,10 +244,15 @@
         /// </summary>
         public Variable Weight;
 
-        // Input neuron of current connection
-        private Neuron _input;
-        // Output neuron of current connection
-        private Neuron _output;
+        /// <summary>
+        /// Input neuron of current connection
+        /// </summary>
+        public Neuron Input;
+
+        /// <summary>
+        /// Output neuron of current connection
+        /// </summary>
+        public Neuron Output;
 
 
         /// <summary>
@@ -261,8 +266,8 @@
             ArgumentNullException.ThrowIfNull(input, nameof(input));
             ArgumentNullException.ThrowIfNull(output, nameof(output));
             ArgumentNullException.ThrowIfNull(value, nameof(value));
-            _input = input;
-            _output = output;
+            Input = input;
+            Output = output;
             Weight = value;
         }
 
@@ -289,17 +294,17 @@
         /// <param name="lr">learning rate</param>
         /// <param name="derivative">derive of neuron's activation function</param>
         public void UpdateWeight(decimal lr, decimal derivative) =>
-            Weight.Value -= lr * derivative * _output.Output;
+            Weight.Value -= lr * derivative * Output.Output;
 
         /// <summary>
         /// Add value to next neuron
         /// </summary>
-        public void GoForward() => _output.Input += _input.Output * Weight.Value;
+        public void GoForward() => Output.Input += Input.Output * Weight.Value;
 
         /// <summary>
         /// Get error of output neuron
         /// </summary>
-        public decimal GetError() => Weight.Value * _output.Error;
+        public decimal GetError() => Weight.Value * Output.Error;
     }
 
     /// <summary>
@@ -369,14 +374,7 @@
         /// </summary>
         public virtual void Activation()
         {
-            if (InputConnections.Count != 0)
-            {
-                Output = ActivationFunction.Calculate(Input);
-            }
-            else
-            {
-                Output = Input;
-            }
+            CalculateOutput();
             if (OutputConnections.Count != 0) GoForward();
         }
 
@@ -405,9 +403,6 @@
         /// </summary>
         public virtual void SetErrors()
         {
-            if (OutputConnections.Count == 0)
-                throw new NNException("This neurons has not output connections");
-
             foreach (Connection i in OutputConnections)
                 Error += i.GetError();
         }
@@ -431,8 +426,23 @@
                 i.UpdateWeight(lr, Derivative);
             }
         }
-    }
 
+        /// <summary>
+        /// Calculate output value
+        /// </summary>
+        public virtual void CalculateOutput()
+        {
+            if (InputConnections.Count != 0)
+            {
+                Output = ActivationFunction.Calculate(Input);
+            }
+            else
+            {
+                Output = Input;
+            }
+        }
+            
+    }
 
     /// <summary>
     /// Provides methods for convolutional neurons
@@ -455,6 +465,25 @@
             {
                 i.UpdateWeight(lr, Derivative);
             }
+        }
+    }
+
+    /// <summary>
+    /// Provides methods for max pooling neurons
+    /// </summary>
+    public class MaxPoolingNeuron : Neuron
+    {
+        /// <summary>
+        /// Create instance ot neuron 
+        /// </summary>
+        /// <param name="function">Logistic function</param>
+        public MaxPoolingNeuron(Activation function) : base(function)
+        {
+        }
+
+        public override void Activation()
+        {
+            if (OutputConnections.Count != 0) GoForward();
         }
     }
 
@@ -829,14 +858,15 @@
             if (poolingArea < 1) throw new NNException("'poolingArea' can not be less than 1");
 
             _countInChannel = countOfRows * countOfColumns;
-            _columnSteps = (int)Math.Ceiling((decimal)(Size[2] / PoolingSize));
-            _rowSteps = (int)Math.Ceiling((decimal)(Size[1] / PoolingSize));
+            
+            _columnSteps = (int)Math.Ceiling((decimal)countOfColumns / poolingArea);
+            _rowSteps = (int)Math.Ceiling((decimal)countOfRows / poolingArea);
             _size = countOfChannels * countOfRows * countOfColumns;
             Size = [countOfChannels, countOfRows, countOfColumns];
             PoolingSize = poolingArea;
             Neurons = new Neuron[_size];
             for (int i = 0; i < _size; i++)
-                Neurons[i] = new Neuron(function);
+                Neurons[i] = new MaxPoolingNeuron(function);
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -847,41 +877,77 @@
             var weightsCount = Size[0] * _rowSteps * _columnSteps;
             Weights = new Variable[weightsCount];
             for (int i = 0; i < weightsCount; i++) Weights[i] = new Variable();
-        }
 
-        public override void Activation()
-        {
-            int currentBNNumber = 0;
+            int cnHelp1 = 0;
             int currentENNumber = 0;
             //[countOfChannels, countOfRows, countOfColumns]
             for (int inputChannel = 0; inputChannel < Size[0]; inputChannel++)
             {
+                var cnHelp2 = cnHelp1;
                 for (int row = 0; row < _rowSteps; row++)
                 {
+                    var currentBNNumber = cnHelp2;
                     for (int column = 0; column < _columnSteps; column++)
                     {
-                        currentBNNumber += (row * Size[2] + column) * PoolingSize;
+                        Neuron currentBNeuron = Neurons[currentBNNumber];
+                        Neuron currentENeuron = _nextLayer.Neurons[currentENNumber];
+                        
+                        var connection = new Connection(currentBNeuron, currentENeuron, Weights[currentENNumber]);
+                        currentBNeuron.AddOutputConnection(connection);
+                        currentENeuron.AddInputConnection(connection);
+
+                        currentBNNumber += PoolingSize;
+                        currentENNumber += 1;
+                    }
+                    cnHelp2 += Size[2] * PoolingSize;
+                }
+                cnHelp1 += _countInChannel;
+            }
+        }
+
+        public override void Activation()
+        {
+            int cnHelp1 = 0;
+            int currentENNumber = 0;
+            //[countOfChannels, countOfRows, countOfColumns]
+            for (int inputChannel = 0; inputChannel < Size[0]; inputChannel++)
+            {
+                var rHelp = 0;
+                var cnHelp2 = cnHelp1;
+                for (int row = 0; row < _rowSteps; row++)
+                {
+                    var cHelp = 0;
+                    var currentBNNumber = cnHelp2;
+                    for (int column = 0; column < _columnSteps; column++)
+                    {
                         Neuron maxValue = Neurons[currentBNNumber];
                         Neuron currentENeuron = _nextLayer.Neurons[currentENNumber];
-                        //var connections = new Connection[mas];
                         for (int poolRow = 0; poolRow < PoolingSize; poolRow++)
                         {
                             for (int poolColumn = 0; poolColumn < PoolingSize; poolColumn++)
                             {
-                                if ((row * PoolingSize + poolRow < Size[1]) && (column * PoolingSize + poolColumn < Size[2]))
+                                if ((rHelp + poolRow < Size[1]) && (cHelp + poolColumn < Size[2]))
                                 {
                                     Neuron neuron = Neurons[currentBNNumber + poolRow * Size[2] + poolColumn];
+                                    neuron.CalculateOutput();
                                     if (neuron.Output > maxValue.Output) maxValue = neuron;
                                 }
                             }
                         }
+                        var connection = currentENeuron.InputConnections[0];
+                        connection.Input.OutputConnections.RemoveAt(0);
+                        connection.Input = maxValue;
+                        maxValue.OutputConnections.Add(connection);
+                        maxValue.Activation();
+                        currentBNNumber += PoolingSize;
                         currentENNumber += 1;
+                        cHelp += PoolingSize;
                     }
+                    cnHelp2 += Size[2] * PoolingSize;
+                    rHelp += PoolingSize;
                 }
-                currentBNNumber = inputChannel * _countInChannel;
+                cnHelp1 += _countInChannel;
             }
-
-            foreach (Neuron i in Neurons) i.Activation();
         }
     }
 
@@ -1043,12 +1109,14 @@
             string Value = "";
             var sigm = new SigmoidActivation();
             var l1 = new ConvolutionLayer(sigm, 6, 6, 1, 3, 1, 2, 1);
-            var l2 = new LinearLayer(sigm, 9, 2);
-            var l3 = new LinearLayer(sigm, 2, 2);
+            var l2 = new MaxPoolingLayer(sigm, 3, 3, 1, 2);
+            var l3 = new LinearLayer(sigm, 4, 2);
+            var l4 = new LinearLayer(sigm, 2, 2);
             var opt = new LeastSquareOptimizer(1);
-            var net = new Net(opt, l1, l2, l3);
+            var net = new Net(opt, l1, l2, l3, l4);
             l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
-            l2.SetWeights(new decimal[] {0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M, 0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M} );
+            l2.SetWeights([1M, 1M, 1M, 1M]);
+            //l2.SetWeights(new decimal[] {0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M, 0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M} );
             var input = new decimal[] {
             0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M,
             0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M,
@@ -1061,7 +1129,7 @@
 
             var stopw = new Stopwatch();
             stopw.Start();
-            for (int i = 0; i < 10; i++)
+            for (int i = 0; i < 0; i++)
                 net.Train(input, right);
 
             stopw.Stop();
@@ -1074,15 +1142,24 @@
             {
                 Value += ' ' + output[i].ToString();
             }
-
-            Value += '?';
+            Console.WriteLine(Value);
+            Value = "";
 
             for (int i = 0; i < l2.Neurons.Length; i++)
             {
                 Value += ' ' + l2.Neurons[i].Input.ToString();
             }
 
-            Value += '?';
+            Console.WriteLine(Value);
+            Value = "";
+
+            for (int i = 0; i < l3.Neurons.Length; i++)
+            {
+                Value += ' ' + l3.Neurons[i].Input.ToString();
+            }
+
+            Console.WriteLine(Value);
+            Value = "";
 
             for (int i = 0; i < l1.Neurons[0].OutputConnections.Count; i++)
             {
