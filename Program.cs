@@ -692,13 +692,29 @@
     class ConvolutionLayer : Layer
     {
         /// <summary>
-        /// total count of neurons
+        /// Total count of neurons
         /// </summary>
         private int _size;
 
-        private int _outputRows; // 
-        private int _outputColumns; // size of output layer
-        private int _countInChannel; // count neurons in channel
+        /// <summary>
+        /// Count of output channels
+        /// </summary>
+        private int _countOfOutputChannels;
+
+        /// <summary>
+        /// Rows in output layer
+        /// </summary>
+        private int _outputRows;
+
+        /// <summary>
+        /// Columns in output layer
+        /// </summary>
+        private int _outputColumns;
+
+        /// <summary>
+        /// Count neurons in channel
+        /// </summary>
+        private int _countInChannel;
 
         /// <summary>
         /// Stride of convolution
@@ -734,14 +750,11 @@
         public ConvolutionLayer(Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int maskSize = 3, int countOfMasks = 3, int stride = 1, int padding = 0)
         {
             ArgumentNullException.ThrowIfNull(function, nameof(function));
-            if (countOfChannels < 1) throw new NNException("'countOfChannels' can not be less than 1");
-            if (countOfRows < 1) throw new NNException("'countOfRows' can not be less than 1");
-            if (countOfColumns < 1) throw new NNException("'countOfColumns' can not be less than 1");
-            if (maskSize < 1) throw new NNException("'maskSize' can not be less than 1");
-            if (countOfMasks < 1) throw new NNException("'countOfMasks' can not be less than 1");
-            if (stride < 1) throw new NNException("'stride' can not be less than 1");
-            if (padding < 0) throw new NNException("'stride' can not be less than 0");
 
+            var sizes = GetOutputSizes(countOfRows, countOfColumns, countOfChannels, maskSize, countOfMasks, stride, padding);
+            _countOfOutputChannels = sizes[0];
+            _outputRows = sizes[1];
+            _outputColumns = sizes[2];
             CountOfMasks = countOfMasks;
             MaskSize = maskSize;
             Stride = stride;
@@ -754,6 +767,34 @@
                 Neurons[i] = new ConvolutionalNeuron(function);
         }
 
+        /// <summary>
+        /// Return output sharp of layer
+        /// </summary>
+        /// <param name="countOfRows">count of rows</param>
+        /// <param name="countOfColumns">count of columns</param>
+        /// <param name="countOfChannels">count of input channels</param>
+        /// <param name="maskSize">size of convolutional mask</param>
+        /// <param name="countOfMasks">count of mask per channel</param>
+        /// <param name="stride">stride of convolution</param>
+        /// <param name="padding">zero padding of edges</param>
+        /// <returns>Array like [count of output channels, rows, columns]</returns>
+        /// <exception cref="NNException"></exception>
+        public static int[] GetOutputSizes(int countOfRows, int countOfColumns, int countOfChannels, int maskSize, int countOfMasks, int stride, int padding)
+        {
+            if (countOfChannels < 1) throw new NNException("'countOfChannels' can not be less than 1");
+            if (countOfRows < 1) throw new NNException("'countOfRows' can not be less than 1");
+            if (countOfColumns < 1) throw new NNException("'countOfColumns' can not be less than 1");
+            if (maskSize < 1) throw new NNException("'maskSize' can not be less than 1");
+            if (countOfMasks < 1) throw new NNException("'countOfMasks' can not be less than 1");
+            if (stride < 1) throw new NNException("'stride' can not be less than 1");
+            if (padding < 0) throw new NNException("'stride' can not be less than 0");
+
+            int countOfOutputChannels = countOfChannels * countOfMasks;
+            int rowSteps = (int)Math.Ceiling((decimal)((2 * padding + countOfRows - maskSize + 1) / stride));
+            int columnSteps = (int)Math.Ceiling((decimal)((2 * padding + countOfColumns - maskSize + 1) / stride));
+            return [countOfOutputChannels, rowSteps, columnSteps];
+        }
+
         public override void InitializeConnections(Layer nextLayer)
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
@@ -761,22 +802,20 @@
             ///[countOfChannels, countOfRows, countOfColumns]
             var weightsCount = MaskSize * MaskSize * Size[0] * CountOfMasks;
             Weights = new Variable[weightsCount];
-            int rowSteps = (int)Math.Ceiling((decimal)((2 * Padding + Size[1] - MaskSize + 1) / Stride));
-            int columnSteps = (int)Math.Ceiling((decimal)((2 * Padding + Size[2] - MaskSize + 1) / Stride));
             for (int i = 0; i < weightsCount; i++) Weights[i] = new Variable();
 
             for (int inputChannel = 0; inputChannel < Size[0]; inputChannel++)
             {
-                for (int maskNumber = 0; maskNumber < CountOfMasks; maskNumber++)
+                for (int maskNumber = 0; maskNumber < _countOfOutputChannels; maskNumber++)
                 {
-                    for (int row = 0; row < rowSteps; row++)
+                    for (int row = 0; row < _outputRows; row++)
                     {
-                        for (int column = 0; column < columnSteps; column++)
+                        for (int column = 0; column < _outputColumns; column++)
                         {
                             int cRow = row * Stride - Padding;
                             int cColumn = column * Stride - Padding;
                             int currentBNNumber = inputChannel * _countInChannel + cRow * Size[2] + cColumn;
-                            int currentENNumber = inputChannel * columnSteps * rowSteps + row * columnSteps + column;
+                            int currentENNumber = inputChannel * _outputColumns * _outputRows + row * _outputColumns + column;
 
                             Neuron currentENeuron = nextLayer.Neurons[currentENNumber];
                             int currentMNumber = (inputChannel * CountOfMasks + maskNumber) * MaskSize * MaskSize;
@@ -794,7 +833,6 @@
                                         currentBNeuron.AddOutputConnection(connection);
                                         currentENeuron.AddInputConnection(connection);
                                     }
-
                                     weightPointer++;
                                 }
                             }
@@ -816,14 +854,19 @@
         private int _size;
 
         /// <summary>
-        /// Steps of iteration of row
+        /// Count of output channels
         /// </summary>
-        private int _rowSteps;
+        private int _countOfOutputChannels;
 
         /// <summary>
-        /// Steps of iteration of column
+        /// Rows in output layer
         /// </summary>
-        private int _columnSteps;
+        private int _outputRows;
+
+        /// <summary>
+        /// Columns in output layer
+        /// </summary>
+        private int _outputColumns;
 
         /// <summary>
         /// Count neurons in channel
@@ -852,15 +895,12 @@
         public MaxPoolingLayer(Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2)
         {
             ArgumentNullException.ThrowIfNull(function, nameof(function));
-            if (countOfChannels < 1) throw new NNException("'countOfChannels' can not be less than 1");
-            if (countOfRows < 1) throw new NNException("'countOfRows' can not be less than 1");
-            if (countOfColumns < 1) throw new NNException("'countOfColumns' can not be less than 1");
-            if (poolingArea < 1) throw new NNException("'poolingArea' can not be less than 1");
+
+            var sizes = GetOutputSizes(countOfRows, countOfColumns, countOfChannels, poolingArea);
 
             _countInChannel = countOfRows * countOfColumns;
-            
-            _columnSteps = (int)Math.Ceiling((decimal)countOfColumns / poolingArea);
-            _rowSteps = (int)Math.Ceiling((decimal)countOfRows / poolingArea);
+            _outputRows = sizes[1];
+            _outputColumns = sizes[2];
             _size = countOfChannels * countOfRows * countOfColumns;
             Size = [countOfChannels, countOfRows, countOfColumns];
             PoolingSize = poolingArea;
@@ -869,12 +909,34 @@
                 Neurons[i] = new MaxPoolingNeuron(function);
         }
 
+        /// <summary>
+        /// Return output sharp of layer
+        /// </summary>
+        /// <param name="countOfRows">count of rows</param>
+        /// <param name="countOfColumns">count of columns</param>
+        /// <param name="countOfChannels">count of input channels</param>
+        /// <param name="poolingArea">size of cide of pooling square</param>
+        /// <returns>Array like [count of output channels, rows, columns]</returns>
+        /// <exception cref="NNException"></exception>
+        public static int[] GetOutputSizes(int countOfRows, int countOfColumns, int countOfChannels, int poolingArea)
+        {
+            if (countOfChannels < 1) throw new NNException("'countOfChannels' can not be less than 1");
+            if (countOfRows < 1) throw new NNException("'countOfRows' can not be less than 1");
+            if (countOfColumns < 1) throw new NNException("'countOfColumns' can not be less than 1");
+            if (poolingArea < 1) throw new NNException("'poolingArea' can not be less than 1");
+
+            int countOfOutputChannels = countOfChannels;
+            int columnSteps = (int)Math.Ceiling((decimal)countOfColumns / poolingArea);
+            int rowSteps = (int)Math.Ceiling((decimal)countOfRows / poolingArea);
+            return [countOfOutputChannels, rowSteps, columnSteps];
+        }
+
         public override void InitializeConnections(Layer nextLayer)
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
 
             _nextLayer = nextLayer;
-            var weightsCount = Size[0] * _rowSteps * _columnSteps;
+            var weightsCount = Size[0] * _outputRows * _outputColumns;
             Weights = new Variable[weightsCount];
             for (int i = 0; i < weightsCount; i++) Weights[i] = new Variable();
 
@@ -884,18 +946,16 @@
             for (int inputChannel = 0; inputChannel < Size[0]; inputChannel++)
             {
                 var cnHelp2 = cnHelp1;
-                for (int row = 0; row < _rowSteps; row++)
+                for (int row = 0; row < _outputRows; row++)
                 {
                     var currentBNNumber = cnHelp2;
-                    for (int column = 0; column < _columnSteps; column++)
+                    for (int column = 0; column < _outputColumns; column++)
                     {
                         Neuron currentBNeuron = Neurons[currentBNNumber];
                         Neuron currentENeuron = _nextLayer.Neurons[currentENNumber];
-                        
                         var connection = new Connection(currentBNeuron, currentENeuron, Weights[currentENNumber]);
                         currentBNeuron.AddOutputConnection(connection);
                         currentENeuron.AddInputConnection(connection);
-
                         currentBNNumber += PoolingSize;
                         currentENNumber += 1;
                     }
@@ -914,11 +974,11 @@
             {
                 var rHelp = 0;
                 var cnHelp2 = cnHelp1;
-                for (int row = 0; row < _rowSteps; row++)
+                for (int row = 0; row < _outputRows; row++)
                 {
                     var cHelp = 0;
                     var currentBNNumber = cnHelp2;
-                    for (int column = 0; column < _columnSteps; column++)
+                    for (int column = 0; column < _outputColumns; column++)
                     {
                         Neuron maxValue = Neurons[currentBNNumber];
                         Neuron currentENeuron = _nextLayer.Neurons[currentENNumber];
@@ -1108,8 +1168,8 @@
         {
             string Value = "";
             var sigm = new SigmoidActivation();
-            var l1 = new ConvolutionLayer(sigm, 6, 6, 1, 3, 1, 2, 1);
-            var l2 = new MaxPoolingLayer(sigm, 3, 3, 1, 2);
+            var l1 = new ConvolutionLayer(sigm, 8, 6, 1, 3, 1, 2, 1);
+            var l2 = new MaxPoolingLayer(sigm, 4, 3, 1, 2);
             var l3 = new LinearLayer(sigm, 4, 2);
             var l4 = new LinearLayer(sigm, 2, 2);
             var opt = new LeastSquareOptimizer(1);
@@ -1123,6 +1183,8 @@
             0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M,
             0.1M, 0.8M, 0.2M, 0.1M, 0.6M, 0.8M,
             0.1M, 0.5M, 0.1M, 0.4M, 0.6M, 0.5M,
+            0.9M, 0.2M, 0.4M, 0.9M, 0.6M, 0.9M,
+            0.1M, 0.5M, 0.1M, 0.4M, 0.6M, 0.5M,
             0.9M, 0.2M, 0.4M, 0.9M, 0.6M, 0.9M
             };
             var right = new decimal[] { 0.5M, 0.9M };
@@ -1131,8 +1193,8 @@
             stopw.Start();
             for (int i = 0; i < 0; i++)
                 net.Train(input, right);
-
             stopw.Stop();
+            
             Console.WriteLine(stopw.Elapsed.ToString());
             var output = net.Output(input);
             net.ClearErrors();
