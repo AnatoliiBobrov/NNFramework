@@ -184,6 +184,69 @@
     }
 
     /// <summary>
+    /// Implenents methods for learning rate sheduler
+    /// </summary>
+    public class Sheduler
+    {
+        /// <summary>
+        /// Optimizer with adjustable learning rate
+        /// </summary>
+        public Optimizer Optimizer;
+
+        /// <summary>
+        /// Current step in learning rate shedule
+        /// </summary>
+        public int CurrentStep = 0;
+
+        /// <summary>
+        /// Create new sheduler
+        /// </summary>
+        /// <param name="optimizer">optimizer with adjustable learning rate</param>
+        public Sheduler(Optimizer optimizer)
+        {
+            ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
+            Optimizer = optimizer; 
+        }
+
+        /// <summary>
+        /// Made a one step in shedule
+        /// </summary>
+        public virtual void Step()
+        {
+        }
+    }
+
+    /// <summary>
+    /// Implenents methods for learning rate sheduler
+    /// </summary>
+    public class ExponentialSheduler : Sheduler
+    {
+        /// <summary>
+        /// Divider of learning rate
+        /// </summary>
+        private decimal _gamma;
+
+        /// <summary>
+        /// Create new exponential sheduler dividing the learning rate of divider every step
+        /// </summary>
+        /// <param name="optimizer">optimizer with adjustable learning rate</param>
+        /// <param name="gamma">divider of learning rate</param>
+        public ExponentialSheduler(Optimizer optimizer, decimal gamma) : base (optimizer) =>
+            _gamma = gamma;
+
+        /// <summary>
+        /// Made a one step in shedule
+        /// </summary>
+        public override void Step()
+        {
+            CurrentStep++;
+            Optimizer.LearningRate /= _gamma;
+        }
+    }
+
+
+
+    /// <summary>
     /// Optimize by least square's method
     /// </summary>
     public class LeastSquareOptimizer : Optimizer
@@ -340,7 +403,6 @@
         }
     }
 
-
     /// <summary>
     /// Provides methods for neurons
     /// </summary>
@@ -456,9 +518,7 @@
             SetDerivative();
             var lr = OwnerNet.Optimizer.LearningRate;
             foreach (Connection i in InputConnections)
-            {
                 i.UpdateWeight(lr, Derivative);
-            }
         }
 
         /// <summary>
@@ -605,9 +665,7 @@
         {
             var result = new decimal[Neurons.Length];
             for (int i = 0; i < Neurons.Length; i++)
-            {
                 result[i] = Neurons[i].Output;
-            }
             return result;
         }
 
@@ -1219,7 +1277,8 @@
         /// Create new instance of network
         /// </summary>
         /// <param name="layers">Layers of NN</param>
-        public Net(Optimizer optimizer, params Layer[] layers)
+        /// /// <param name="lastActivation">Activation function of output layer</param>
+        public Net(Optimizer optimizer, Activation lastActivation, params Layer[] layers)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             for (int begin = 0; begin < layers.Length - 1; begin++)
@@ -1243,11 +1302,19 @@
                 }
             }
 
-            this.Optimizer = optimizer;
+            Optimizer = optimizer;
             Layers = new List<Layer>(layers);
             foreach (Layer layer in layers) layer.SetOwnerNet(this);
             for (int i = 0; i < Layers.Count - 1; i++)
                 Layers[i].InitializeConnections(Layers[i + 1]);
+            Layer lastLayer = Layers.Last();
+            int lOutputs = lastLayer.CountOfOutputNeurons;
+            LinearLayer newLast = new(lastActivation, lOutputs, lOutputs);
+            newLast.SetOwnerNet(this);
+            lastLayer.InitializeConnections(newLast);
+            Layers.Add(newLast);
+            
+
         }
 
         /// <summary>
@@ -1272,18 +1339,9 @@
         /// <param name="input">input value of neural network</param>
         private void SetInputs(decimal[] input)
         {
-            try
-            {
-                Layers[0].SetInputs(input);
-            }
-            catch (Exception e)
-            {
-                throw new NNException("Can not handle this exception", e);
-            }
+            Layers[0].SetInputs(input);
             for (int i = 1; i < Layers.Count; i++)
-            {
                 Layers[i].ClearInputs();
-            }
         }
 
         /// <summary>
@@ -1292,19 +1350,9 @@
         /// <param name="right">Expected outputs</param>
         public void SetErrors(decimal[] right)
         {
-            try
-            {
-                Layers.Last().SetErrors(right);
-            }
-            catch (Exception e)
-            {
-                throw new NNException("Can not handle this exception", e);
-            }
-
+            Layers.Last().SetErrors(right);
             for (int i = Layers.Count - 2; i > 0; i--)
-            {
                 Layers[i].SetErrors();
-            }
         }
 
         /// <summary>
@@ -1313,9 +1361,7 @@
         public void UpdateWeights()
         {
             for (int i = Layers.Count - 1; i > 0; i--)
-            {
                 Layers[i].UpdateWeights(this);
-            }
         }
 
         /// <summary>
@@ -1325,15 +1371,7 @@
         /// <returns>result of NN</returns>
         public decimal[] Output(decimal[] input)
         {
-            try
-            {
-                SetInputs(input);
-            }
-            catch (Exception e)
-            {
-                throw new NNException("Can not handle this exception", e);
-            }
-
+            SetInputs(input);
             Activation();
             return Layers.Last().GetOutputs();
         }
@@ -1345,27 +1383,10 @@
         /// <param name="right">expected values</param>
         public void Train(decimal[] input, decimal[] right)
         {
-            try
-            {
-                SetInputs(input);
-            }
-            catch (Exception e)
-            {
-                throw new NNException("Can not handle this exception", e);
-            }
-
+            SetInputs(input);
             Activation();
             ClearErrors();
-
-            try
-            {
-                SetErrors(right);
-            }
-            catch (Exception e)
-            {
-                throw new NNException("Can not handle this exception", e);
-            }
-
+            SetErrors(right);
             UpdateWeights();
         }
     }
@@ -1378,13 +1399,12 @@
             string Value = "";
             var act = new SigmoidActivation();
             var l1 = new ConvolutionLayer(act, 8, 6, 2, 3, 1, 2, 1);
-            var l2 = new SumPoolingLayer(act, 4, 3, 2, 2);
+            var l2 = new AveragePoolingLayer(act, 4, 3, 2, 2);
             var l3 = new LinearLayer(act, 8, 2);
-            var l4 = new LinearLayer(act, 2, 2);
-            var opt = new LeastSquareOptimizer(0.01M);
-            var net = new Net(opt, l1, l2, l3, l4);
+            var opt = new LeastSquareOptimizer(1M);
+            var shedule = new ExponentialSheduler(opt, 1.01M);
+            var net = new Net(opt, act, l1, l2, l3);
             l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M, 0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
-            //l2.SetWeights(new decimal[] {0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M, 0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M} );
             var input = new decimal[] {
             0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M,
             0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M,
@@ -1406,15 +1426,19 @@
             var right = new decimal[] { 0.5M, 0.9M };
             var stopw = new Stopwatch();
             stopw.Start();
-            for (int i = 0; i < 430000; i++)
+            for (int i = 0; i < 30; i++)
+            {
                 net.Train(input, right);
+                shedule.Step();
+                Console.WriteLine(opt.LearningRate);
+            }
+                
+
             stopw.Stop();
             
             Console.WriteLine(stopw.Elapsed.ToString());
             var output = net.Output(input);
-            net.ClearErrors();
-            net.SetErrors(right);
-
+            
             for (int i = 0; i < output.Length; i++)
             {
                 Value += ' ' + output[i].ToString();
@@ -1444,53 +1468,5 @@
             }
             Console.WriteLine(Value);
         }
-
-    }
-
-    public class MyNet_
-    {
-
-        public static void Main111()
-        {
-            string Value = "";
-            var sigm = new SigmoidActivation();
-            var l1 = new LinearLayer(sigm, 2, 2);
-            var l2 = new LinearLayer(sigm, 2, 2);
-            var l3 = new LinearLayer(sigm, 2, 2);
-            var opt = new LeastSquareOptimizer(1);
-            var net = new Net(opt, l1, l2, l3);
-            l1.SetWeights([0.5M, 0.7M, 0.4M, 0.6M]);
-            l2.SetWeights([0.3M, 0.6M, 0.4M, 0.5M]);
-
-            var input = new decimal[] { 1M, 0.5M };
-            var right = new decimal[] { 0.5M, 0.9M };
-
-            for (int i = 0; i < 100; i++)
-
-                net.Train(input, right);
-
-            var output = net.Output(input);
-            net.ClearErrors();
-            net.SetErrors(right);
-            for (int i = 0; i < output.Length; i++)
-            {
-                Value += ' ' + output[i].ToString();
-            }
-
-            Value += '?';
-
-            for (int i = 0; i < l2.Neurons.Length; i++)
-            {
-                Value += ' ' + l2.Neurons[i].Error.ToString();
-            }
-
-            for (int i = 0; i < l2.Neurons[0].OutputConnections.Count; i++)
-            {
-                Value += ' ' + l2.Neurons[0].OutputConnections[i].Weight.ToString();
-            }
-            Console.WriteLine(Value);
-        }
     }
 }
-///A neuron with multiple channels was protesting. There is a check to see if the two layers of neurons are docked properly. There is a check in the network constructor to avoid adding the same layers of neurons. Added a medium pool. __size replaced by Count Of Input Neurons. Removing engagement links in pooling layers. Added UnteachableConnection. Add sum pooling layer
-///
