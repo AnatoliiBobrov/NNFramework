@@ -1,6 +1,5 @@
 ﻿namespace NNFramework
 {
-    using System.Data.Common;
     using System.Diagnostics;
 
     /// <summary>
@@ -293,7 +292,7 @@
         /// </summary>
         /// <param name="lr">learning rate</param>
         /// <param name="derivative">derive of neuron's activation function</param>
-        public void UpdateWeight(decimal lr, decimal derivative) =>
+        public virtual void UpdateWeight(decimal lr, decimal derivative) =>
             Weight.Value -= lr * derivative * Output.Output;
 
         /// <summary>
@@ -306,6 +305,41 @@
         /// </summary>
         public decimal GetError() => Weight.Value * Output.Error;
     }
+
+    /// <summary>
+    /// Provides methods for neural connections
+    /// </summary>
+    public class UnteachableConnection : Connection
+    {
+        /// <summary>
+        /// Create new unteachable connection between neurons
+        /// </summary>
+        /// <param name="input">Input neuron</param>
+        /// <param name="output">Output neuron</param>
+        public UnteachableConnection(Neuron input, Neuron output) : base(input, output) { }
+
+
+        /// <summary>
+        /// Create new unteachable connection between neurons
+        /// </summary>
+        /// <param name="input">Input neuron</param>
+        /// <param name="output">Output neuron</param>
+        /// <param name="value">weight of connection</param>
+        public UnteachableConnection(Neuron input, Neuron output, Variable value) : base(input, output, value) { }
+
+        /// <summary>
+        /// Create new unteachable connection between neurons
+        /// </summary>
+        /// <param name="input">Input neuron</param>
+        /// <param name="output">Output neuron</param>
+        /// <param name="value">weight of connection</param>
+        public UnteachableConnection(Neuron input, Neuron output, decimal value) : base(input, output, new Variable(value)) { }
+
+        public override void UpdateWeight(decimal lr, decimal derivative)
+        {
+        }
+    }
+
 
     /// <summary>
     /// Provides methods for neurons
@@ -493,6 +527,16 @@
     public class Layer
     {
         /// <summary>
+        /// Count if output neurons
+        /// </summary>
+        public int CountOfOutputNeurons;
+
+        /// <summary>
+        /// Count if input neurons
+        /// </summary>
+        public int CountOfInputNeurons;
+
+        /// <summary>
         /// Array of all weights
         /// </summary>
         public Variable[] Weights;
@@ -530,6 +574,8 @@
         public virtual void SetWeights(decimal[] weights)
         {
             ArgumentNullException.ThrowIfNull(weights, nameof(weights));
+            if (Weights == null)
+                throw new NNException("Layer has no weights");
             if (weights.Length != Weights.Length)
                 throw new NNException("Weights' size is not equal count of Layer.Weights.Length");
 
@@ -592,17 +638,7 @@
         /// </summary>
         public virtual void SetErrors()
         {
-            try
-            {
-                for (int i = 0; i < Size[0]; i++)
-                {
-                    Neurons[i].SetErrors();
-                }
-            }
-            catch (Exception e)
-            {
-                throw new NNException("Can not handle this exception", e);
-            }
+            foreach (Neuron neuron in Neurons) neuron.SetErrors();
         }
 
         /// <summary>
@@ -624,7 +660,7 @@
         /// <summary>
         /// Update weights
         /// </summary>
-        /// <param name="net">Net whith contains that layer</param>
+        /// <param name="net">Net which contains that layer</param>
         public virtual void UpdateWeights(Net net)
         {
             foreach (Neuron i in Neurons) i.UpdateWeights();
@@ -657,6 +693,8 @@
             if (outputSize < 1)
                 throw new NNException("Output size of neural network can not be less than 1");
 
+            CountOfInputNeurons = inputSize;
+            CountOfOutputNeurons = outputSize;
             Size = [inputSize];
             Outputs = new Variable[outputSize];
             for (int i = 0; i < outputSize; i++) Outputs[i] = new Variable(0);
@@ -668,17 +706,17 @@
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
 
-            int countOfWeights = Size[0] * nextLayer.Neurons.Length;
+            int countOfWeights = CountOfInputNeurons * CountOfOutputNeurons;
             Weights = new Variable[countOfWeights];
             for (int i = 0; i < countOfWeights; i++) Weights[i] = new Variable();
 
             for (int begin = 0; begin < Size[0]; begin++)
             {
                 var beginNeuron = Neurons[begin];
-                for (int end = 0; end < nextLayer.Neurons.Length; end++)
+                for (int end = 0; end < CountOfOutputNeurons; end++)
                 {
                     var endNeuron = nextLayer.Neurons[end];
-                    var connection = new Connection(beginNeuron, endNeuron, Weights[begin * nextLayer.Neurons.Length + end]);
+                    var connection = new Connection(beginNeuron, endNeuron, Weights[begin * CountOfOutputNeurons + end]);
                     beginNeuron.AddOutputConnection(connection);
                     endNeuron.AddInputConnection(connection);
                 }
@@ -691,11 +729,6 @@
     /// </summary>
     class ConvolutionLayer : Layer
     {
-        /// <summary>
-        /// Total count of neurons
-        /// </summary>
-        private int _size;
-
         /// <summary>
         /// Count of output channels
         /// </summary>
@@ -759,11 +792,12 @@
             MaskSize = maskSize;
             Stride = stride;
             Padding = padding;
-            _size = countOfChannels * countOfRows * countOfColumns;
+            CountOfInputNeurons = countOfChannels * countOfRows * countOfColumns;
+            CountOfOutputNeurons = _countOfOutputChannels * _outputRows * _outputColumns;
             _countInChannel = countOfRows * countOfColumns;
             Size = [countOfChannels, countOfRows, countOfColumns];
-            Neurons = new Neuron[_size];
-            for (int i = 0; i < _size; i++)
+            Neurons = new Neuron[CountOfInputNeurons];
+            for (int i = 0; i < CountOfInputNeurons; i++)
                 Neurons[i] = new ConvolutionalNeuron(function);
         }
 
@@ -806,7 +840,7 @@
 
             for (int inputChannel = 0; inputChannel < Size[0]; inputChannel++)
             {
-                for (int maskNumber = 0; maskNumber < _countOfOutputChannels; maskNumber++)
+                for (int maskNumber = 0; maskNumber < CountOfMasks; maskNumber++)
                 {
                     for (int row = 0; row < _outputRows; row++)
                     {
@@ -849,11 +883,6 @@
     class MaxPoolingLayer : Layer
     {
         /// <summary>
-        /// total count of neurons
-        /// </summary>
-        private int _size;
-
-        /// <summary>
         /// Count of output channels
         /// </summary>
         private int _countOfOutputChannels;
@@ -876,7 +905,7 @@
         /// <summary>
         /// Next layer
         /// </summary>
-        private Layer _nextLayer;
+        private Layer NextLayer;
 
         /// <summary>
         /// Size of pooling area
@@ -895,22 +924,22 @@
         public MaxPoolingLayer(Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2)
         {
             ArgumentNullException.ThrowIfNull(function, nameof(function));
-
             var sizes = GetOutputSizes(countOfRows, countOfColumns, countOfChannels, poolingArea);
 
             _countInChannel = countOfRows * countOfColumns;
             _outputRows = sizes[1];
             _outputColumns = sizes[2];
-            _size = countOfChannels * countOfRows * countOfColumns;
+            CountOfInputNeurons = countOfChannels * countOfRows * countOfColumns;
+            CountOfOutputNeurons = sizes[0] * _outputRows * _outputColumns;
             Size = [countOfChannels, countOfRows, countOfColumns];
             PoolingSize = poolingArea;
-            Neurons = new Neuron[_size];
-            for (int i = 0; i < _size; i++)
+            Neurons = new Neuron[CountOfInputNeurons];
+            for (int i = 0; i < CountOfInputNeurons; i++)
                 Neurons[i] = new MaxPoolingNeuron(function);
         }
 
         /// <summary>
-        /// Return output sharp of layer
+        /// Return output sharp of layer and check output parameters
         /// </summary>
         /// <param name="countOfRows">count of rows</param>
         /// <param name="countOfColumns">count of columns</param>
@@ -935,11 +964,7 @@
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
 
-            _nextLayer = nextLayer;
-            var weightsCount = Size[0] * _outputRows * _outputColumns;
-            Weights = new Variable[weightsCount];
-            for (int i = 0; i < weightsCount; i++) Weights[i] = new Variable();
-
+            NextLayer = nextLayer;
             int cnHelp1 = 0;
             int currentENNumber = 0;
             //[countOfChannels, countOfRows, countOfColumns]
@@ -952,12 +977,12 @@
                     for (int column = 0; column < _outputColumns; column++)
                     {
                         Neuron currentBNeuron = Neurons[currentBNNumber];
-                        Neuron currentENeuron = _nextLayer.Neurons[currentENNumber];
-                        var connection = new Connection(currentBNeuron, currentENeuron, Weights[currentENNumber]);
+                        Neuron currentENeuron = NextLayer.Neurons[currentENNumber];
+                        var connection = new UnteachableConnection(currentBNeuron, currentENeuron, 1);
                         currentBNeuron.AddOutputConnection(connection);
                         currentENeuron.AddInputConnection(connection);
                         currentBNNumber += PoolingSize;
-                        currentENNumber += 1;
+                        currentENNumber++;
                     }
                     cnHelp2 += Size[2] * PoolingSize;
                 }
@@ -981,7 +1006,7 @@
                     for (int column = 0; column < _outputColumns; column++)
                     {
                         Neuron maxValue = Neurons[currentBNNumber];
-                        Neuron currentENeuron = _nextLayer.Neurons[currentENNumber];
+                        Neuron currentENeuron = NextLayer.Neurons[currentENNumber];
                         for (int poolRow = 0; poolRow < PoolingSize; poolRow++)
                         {
                             for (int poolColumn = 0; poolColumn < PoolingSize; poolColumn++)
@@ -1000,7 +1025,7 @@
                         maxValue.OutputConnections.Add(connection);
                         maxValue.Activation();
                         currentBNNumber += PoolingSize;
-                        currentENNumber += 1;
+                        currentENNumber++;
                         cHelp += PoolingSize;
                     }
                     cnHelp2 += Size[2] * PoolingSize;
@@ -1008,6 +1033,169 @@
                 }
                 cnHelp1 += _countInChannel;
             }
+        }
+    }
+
+    /// <summary>
+    /// Provides methods for summation pooling layer
+    /// </summary>
+    class SumPoolingLayer : Layer
+    {
+        /// <summary>
+        /// Count of output channels
+        /// </summary>
+        private int _countOfOutputChannels;
+
+        /// <summary>
+        /// Rows in output layer
+        /// </summary>
+        private int _outputRows;
+
+        /// <summary>
+        /// Columns in output layer
+        /// </summary>
+        private int _outputColumns;
+
+        /// <summary>
+        /// Count neurons in channel
+        /// </summary>
+        private int _countInChannel;
+
+        /// <summary>
+        /// Next layer
+        /// </summary>
+        public Layer NextLayer;
+
+        /// <summary>
+        /// Size of pooling area
+        /// </summary>
+        public int PoolingSize;
+
+        /// <summary>
+        /// Create instance of summation pooling layer
+        /// </summary>
+        /// <param name="function">activation function of all neurons of layer</param>
+        /// <param name="countOfRows">count of rows</param>
+        /// <param name="countOfColumns">count of columns</param>
+        /// <param name="countOfChannels">count of input channels</param>
+        /// <param name="poolingArea">size of cide of pooling square</param>
+        /// <exception cref="NNException"></exception>
+        public SumPoolingLayer(Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2)
+        {
+            ArgumentNullException.ThrowIfNull(function, nameof(function));
+            var sizes = GetOutputSizes(countOfRows, countOfColumns, countOfChannels, poolingArea);
+
+            _countInChannel = countOfRows * countOfColumns;
+            _outputRows = sizes[1];
+            _outputColumns = sizes[2];
+            CountOfInputNeurons = countOfChannels * countOfRows * countOfColumns;
+            CountOfOutputNeurons = sizes[0] * _outputRows * _outputColumns;
+            Size = [countOfChannels, countOfRows, countOfColumns];
+            PoolingSize = poolingArea;
+            Neurons = new Neuron[CountOfInputNeurons];
+            for (int i = 0; i < CountOfInputNeurons; i++)
+                Neurons[i] = new Neuron(function);
+        }
+
+        /// <summary>
+        /// Return output sharp of layer and check output parameters
+        /// </summary>
+        /// <param name="countOfRows">count of rows</param>
+        /// <param name="countOfColumns">count of columns</param>
+        /// <param name="countOfChannels">count of input channels</param>
+        /// <param name="poolingArea">size of cide of pooling square</param>
+        /// <returns>Array like [count of output channels, rows, columns]</returns>
+        /// <exception cref="NNException"></exception>
+        public static int[] GetOutputSizes(int countOfRows, int countOfColumns, int countOfChannels, int poolingArea)
+        {
+            if (countOfChannels < 1) throw new NNException("'countOfChannels' can not be less than 1");
+            if (countOfRows < 1) throw new NNException("'countOfRows' can not be less than 1");
+            if (countOfColumns < 1) throw new NNException("'countOfColumns' can not be less than 1");
+            if (poolingArea < 1) throw new NNException("'poolingArea' can not be less than 1");
+
+            int countOfOutputChannels = countOfChannels;
+            int columnSteps = (int)Math.Ceiling((decimal)countOfColumns / poolingArea);
+            int rowSteps = (int)Math.Ceiling((decimal)countOfRows / poolingArea);
+            return [countOfOutputChannels, rowSteps, columnSteps];
+        }
+
+        /// <summary>
+        /// Initialize neurons of layer
+        /// </summary>
+        /// <param name="nextLayer">next layer</param>
+        public void InitConnections(Layer nextLayer)
+        {
+            ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
+
+            NextLayer = nextLayer;
+            int cnHelp1 = 0;
+            int currentENNumber = 0;
+            //[countOfChannels, countOfRows, countOfColumns]
+            for (int inputChannel = 0; inputChannel < Size[0]; inputChannel++)
+            {
+                var rHelp = 0;
+                var cnHelp2 = cnHelp1;
+                for (int row = 0; row < _outputRows; row++)
+                {
+                    var cHelp = 0;
+                    var currentBNNumber = cnHelp2;
+                    for (int column = 0; column < _outputColumns; column++)
+                    {
+                        Neuron currentENeuron = NextLayer.Neurons[currentENNumber];
+                        Variable weight = new(1);
+                        for (int poolRow = 0; poolRow < PoolingSize; poolRow++)
+                        {
+                            for (int poolColumn = 0; poolColumn < PoolingSize; poolColumn++)
+                            {
+                                if ((rHelp + poolRow < Size[1]) && (cHelp + poolColumn < Size[2]))
+                                {
+                                    Neuron currentBNeuron = Neurons[currentBNNumber + poolRow * Size[2] + poolColumn];
+                                    UnteachableConnection connection = new(currentBNeuron, currentENeuron, weight);
+                                    currentBNeuron.AddOutputConnection(connection);
+                                    currentENeuron.AddInputConnection(connection);
+                                }
+                            }
+                        }
+                        currentBNNumber += PoolingSize;
+                        currentENNumber++;
+                        cHelp += PoolingSize;
+                    }
+                    cnHelp2 += Size[2] * PoolingSize;
+                    rHelp += PoolingSize;
+                }
+                cnHelp1 += _countInChannel;
+            }
+        }
+
+        public override void InitializeConnections(Layer nextLayer)
+        {
+            InitConnections(nextLayer);
+        }
+    }
+
+    /// <summary>
+    /// Provides methods for average pooling layer
+    /// </summary>
+    class AveragePoolingLayer : SumPoolingLayer
+    {
+        /// <summary>
+        /// Create instance of average pooling layer
+        /// </summary>
+        /// <param name="function">activation function of all neurons of layer</param>
+        /// <param name="countOfRows">count of rows</param>
+        /// <param name="countOfColumns">count of columns</param>
+        /// <param name="countOfChannels">count of input channels</param>
+        /// <param name="poolingArea">size of cide of pooling square</param>
+        /// <exception cref="NNException"></exception>
+        public AveragePoolingLayer(Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2) : base (function, countOfRows, countOfColumns, countOfChannels, poolingArea)
+        {
+        }
+
+        public override void InitializeConnections(Layer nextLayer)
+        {
+            InitConnections(nextLayer);
+            foreach (Neuron neuron in NextLayer.Neurons)
+                neuron.InputConnections[0].Weight.Value /= neuron.InputConnections.Count;
         }
     }
 
@@ -1034,6 +1222,26 @@
         public Net(Optimizer optimizer, params Layer[] layers)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
+            for (int begin = 0; begin < layers.Length - 1; begin++)
+            {
+                var bLayer = layers[begin];
+                var eLayer = layers[begin + 1];
+                if (bLayer == null)
+                    throw new NNException("Layer with index " + begin.ToString() + " is null");
+                if (eLayer == null)
+                    throw new NNException("Layer with index " + (begin + 1).ToString() + " is null");
+                var outputs = bLayer.CountOfOutputNeurons;
+                var inputs = eLayer.CountOfInputNeurons;
+                if (outputs != inputs)
+                    throw new NNException("Layer with index " + begin.ToString() + " have " + outputs.ToString() + " output neurons but layer with index " + (begin + 1).ToString() + " have " + inputs.ToString());
+
+                for (int end = begin + 1; end < layers.Length; end++)
+                {
+                    eLayer = layers[end];
+                    if (bLayer == eLayer)
+                        throw new NNException("Layers with indexes " + begin.ToString() + " and " + end.ToString() + " is equal");
+                }
+            }
 
             this.Optimizer = optimizer;
             Layers = new List<Layer>(layers);
@@ -1166,18 +1374,26 @@
     {
         public static void Main()
         {
+            RandomGenerator.SetSeed(0);
             string Value = "";
-            var sigm = new SigmoidActivation();
-            var l1 = new ConvolutionLayer(sigm, 8, 6, 1, 3, 1, 2, 1);
-            var l2 = new MaxPoolingLayer(sigm, 4, 3, 1, 2);
-            var l3 = new LinearLayer(sigm, 4, 2);
-            var l4 = new LinearLayer(sigm, 2, 2);
-            var opt = new LeastSquareOptimizer(1);
+            var act = new SigmoidActivation();
+            var l1 = new ConvolutionLayer(act, 8, 6, 2, 3, 1, 2, 1);
+            var l2 = new SumPoolingLayer(act, 4, 3, 2, 2);
+            var l3 = new LinearLayer(act, 8, 2);
+            var l4 = new LinearLayer(act, 2, 2);
+            var opt = new LeastSquareOptimizer(0.01M);
             var net = new Net(opt, l1, l2, l3, l4);
-            l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
-            l2.SetWeights([1M, 1M, 1M, 1M]);
+            l1.SetWeights([0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M, 0.1M, 0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.8M, 0.9M]);
             //l2.SetWeights(new decimal[] {0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M, 0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M, 0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M} );
             var input = new decimal[] {
+            0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M,
+            0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M,
+            0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M,
+            0.1M, 0.8M, 0.2M, 0.1M, 0.6M, 0.8M,
+            0.1M, 0.5M, 0.1M, 0.4M, 0.6M, 0.5M,
+            0.9M, 0.2M, 0.4M, 0.9M, 0.6M, 0.9M,
+            0.1M, 0.5M, 0.1M, 0.4M, 0.6M, 0.5M,
+            0.9M, 0.2M, 0.4M, 0.9M, 0.6M, 0.9M,
             0.2M, 0.3M, 0.4M, 0.5M, 0.6M, 0.7M,
             0.3M, 0.4M, 0.7M, 0.1M, 0.9M, 0.8M,
             0.9M, 0.2M, 0.6M, 0.2M, 0.8M, 0.4M,
@@ -1188,10 +1404,9 @@
             0.9M, 0.2M, 0.4M, 0.9M, 0.6M, 0.9M
             };
             var right = new decimal[] { 0.5M, 0.9M };
-
             var stopw = new Stopwatch();
             stopw.Start();
-            for (int i = 0; i < 0; i++)
+            for (int i = 0; i < 430000; i++)
                 net.Train(input, right);
             stopw.Stop();
             
@@ -1209,7 +1424,7 @@
 
             for (int i = 0; i < l2.Neurons.Length; i++)
             {
-                Value += ' ' + l2.Neurons[i].Input.ToString();
+                Value += ' ' + l2.Neurons[i].Output.ToString();
             }
 
             Console.WriteLine(Value);
@@ -1277,3 +1492,5 @@
         }
     }
 }
+///A neuron with multiple channels was protesting. There is a check to see if the two layers of neurons are docked properly. There is a check in the network constructor to avoid adding the same layers of neurons. Added a medium pool. __size replaced by Count Of Input Neurons. Removing engagement links in pooling layers. Added UnteachableConnection. Add sum pooling layer
+///
