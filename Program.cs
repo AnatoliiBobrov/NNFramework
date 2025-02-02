@@ -1,10 +1,9 @@
 ﻿namespace NNFramework
 {
     using System.Diagnostics;
+    using System.Collections.Generic;
 
-    /// <summary>
-    /// Provides exceptions of this module
-    /// </summary>
+    
     public class NNException : Exception
     {
         /// <summary>
@@ -217,7 +216,7 @@
     }
 
     /// <summary>
-    /// Implenents methods for learning rate sheduler
+    /// Implenents methods for exponential decay learning rate sheduler
     /// </summary>
     public class ExponentialSheduler : Sheduler
     {
@@ -234,9 +233,6 @@
         public ExponentialSheduler(Optimizer optimizer, decimal gamma) : base (optimizer) =>
             _gamma = gamma;
 
-        /// <summary>
-        /// Made a one step in shedule
-        /// </summary>
         public override void Step()
         {
             CurrentStep++;
@@ -244,6 +240,76 @@
         }
     }
 
+    /// <summary>
+    /// Implenents methods for linear decay learning rate sheduler
+    /// </summary>
+    public class DiscreteSheduler : Sheduler
+    {
+        /// <summary>
+        /// Shedule Dictionary<steps, learning rate>
+        /// </summary>
+        private Dictionary<int, decimal> _shedule;
+
+        /// <summary>
+        /// Shedule Dictionary<steps, learning rate>
+        /// </summary>
+        private int _currentNote = 0;
+
+        /// <summary>
+        /// Steps to change LR
+        /// </summary>
+        private int _targetStep = 0;
+
+        /// <summary>
+        /// Create new linear sheduler decaying the learning rate every step
+        /// </summary>
+        /// <param name="optimizer">optimizer with adjustable learning rate</param>
+        /// <param name="shedule">shedule Dictionary<steps, learning rate></param>
+        public DiscreteSheduler(Optimizer optimizer, Dictionary<int, decimal> shedule) : base(optimizer)
+        {
+            ArgumentNullException.ThrowIfNull(shedule, nameof(shedule));
+            if (shedule.Count == 0)
+                throw new NNException("Shedule must contain at least 1 note");
+
+            _shedule = new Dictionary<int, decimal>(shedule.OrderBy(key => key.Key));
+            _targetStep = _shedule.Keys.ElementAt(0);
+        }
+
+        public override void Step()
+        {
+            if (CurrentStep >= _targetStep)
+            CurrentStep++;
+        }
+    }
+
+    //10 steps 1
+    //20 steps 0.5
+    //40 steps 0.24
+    //84 steps 0.1
+    /// <summary>
+    /// Implenents methods for linear decay learning rate sheduler
+    /// </summary>
+    public class LinearSheduler : Sheduler
+    {
+        /// <summary>
+        /// Decay of learning rate
+        /// </summary>
+        private decimal _gamma;
+
+        /// <summary>
+        /// Create new linear sheduler decaying the learning rate every step
+        /// </summary>
+        /// <param name="optimizer">optimizer with adjustable learning rate</param>
+        /// <param name="gamma">decay of learning rate</param>
+        public LinearSheduler(Optimizer optimizer, decimal gamma) : base(optimizer) =>
+            _gamma = gamma;
+
+        public override void Step()
+        {
+            CurrentStep++;
+            Optimizer.LearningRate -= _gamma;
+        }
+    }
 
 
     /// <summary>
@@ -1432,7 +1498,10 @@
                 shedule.Step();
                 Console.WriteLine(opt.LearningRate);
             }
-                
+
+            var shedul = new Dictionary<int, decimal>();
+            shedul.Add(4, 4M);
+            var sheduler = new DiscreteSheduler(opt, shedul);
 
             stopw.Stop();
             
