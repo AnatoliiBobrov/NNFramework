@@ -1451,7 +1451,7 @@ namespace NNFramework
             string Value = "";
             var act = new SigmoidActivation();
             var opt1 = new LeastSquareOptimizer(1M);
-            var opt2 = new LeastSquareOptimizer(0.01M);
+            var opt2 = new LeastSquareOptimizer(0.005M);
             var l1 = new ConvolutionLayer(opt1, act, 28, 28, 1, 3, 32, 1, 1);
             var l2 = new MaxPoolingLayer(opt1, act, l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
             var l3 = new ConvolutionLayer(opt1, act, l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 64, 1, 1);
@@ -1475,13 +1475,15 @@ namespace NNFramework
             var test_x = new decimal[testCount][];
             var test_y = new decimal[testCount][];
             var test_y_n = new int[testCount];
+            Decimal down = 0.35M;
+            Decimal up = 0.65M;
             for (int i = 0; i < testCount; i++)
             {
                 var data = lines[i].Split(',');
                 var y = int.Parse(data[0]);
                 test_y_n[i] = y;
-                decimal[] yD = [0.01M, 0.01M, 0.01M, 0.01M, 0.01M, 0.01M, 0.01M, 0.01M, 0.01M, 0.01M];
-                yD[y] = 0.99M;
+                decimal[] yD = [down, down, down, down, down, down, down, down, down, down];
+                yD[y] = up;
                 test_y[i] = yD;
                 var data_x = new decimal[784];
                 for (int j = 1; j < 785; j++)
@@ -1490,8 +1492,7 @@ namespace NNFramework
                 }
                 test_x[i] = data_x;
             }
-            Console.WriteLine(testCount);
-            int dataSetLength = 100;
+            int dataSetLength = 10000;
             for (int epoch = 0; epoch < 100; epoch++)
             {
                 var stopw = new Stopwatch();
