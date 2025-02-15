@@ -38,6 +38,13 @@ namespace NNFramework
         public static decimal Next() => (decimal)(Random.NextDouble() - 0.5);
 
         /// <summary>
+        /// Returns next pseudorandom number from 0 including to 1
+        /// </summary>
+        /// <returns>decimal from 0 including to 1</returns>
+        public static decimal NextPositive() => (decimal)Random.NextDouble();
+
+
+        /// <summary>
         /// Set seed for random generator. Use it before creation of NN
         /// </summary>
         /// <param name="seed">integer number, seed</param>
@@ -54,20 +61,14 @@ namespace NNFramework
         /// </summary>
         /// <param name="input">argument of function</param>
         /// <returns></returns>
-        public virtual decimal Calculate(decimal input)
-        {
-            return 0;
-        }
+        public virtual decimal Calculate(decimal input) => input;
 
         /// <summary>
         /// Return value of derived function in point
         /// </summary>
         /// <param name="point">point of function</param>
         /// <returns></returns>
-        public virtual decimal Derived(decimal point)
-        {
-            return 0;
-        }
+        public virtual decimal Derived(decimal point) => 1;
     }
 
     /// <summary>
@@ -133,6 +134,26 @@ namespace NNFramework
             else return 0;
         }
     }
+
+
+    /// <summary>
+    /// ReLU activation function
+    /// </summary>
+    public class SoftmaxActivation : Activation
+    {
+        public override decimal Calculate(decimal input)
+        {
+            if (input > 0) return input;
+            else return 0;
+        }
+
+        public override decimal Derived(decimal point)
+        {
+            if (point > 0) return 1;
+            else return 0;
+        }
+    }
+
 
     /// <summary>
     /// Provides learning of NN
@@ -386,7 +407,6 @@ namespace NNFramework
         /// </summary>
         public Neuron Output;
 
-
         /// <summary>
         /// Initialize connection between neurons
         /// </summary>
@@ -541,7 +561,8 @@ namespace NNFramework
         public virtual void Activation()
         {
             CalculateOutput();
-            if (OutputConnections.Count != 0) GoForward();
+            if (OutputConnections.Count != 0)
+                GoForward();
         }
 
         /// <summary>
@@ -839,7 +860,6 @@ namespace NNFramework
         /// <param name="function">activation function of all neurons of layer</param>
         /// <param name="inputSize">count of neurons</param>
         /// <param name="outputSize">count of neurons in next layer</param>
-        /// <param name="function">logistic function</param>
         /// <exception cref="NNException"></exception>
         public LinearLayer(Optimizer optimizer, Activation function, int inputSize, int outputSize)
         {
@@ -881,6 +901,74 @@ namespace NNFramework
             }
         }
     }
+
+
+    /// <summary>
+    /// Provides methods for dropout layer
+    /// </summary>
+    class DropoutLayer : Layer
+    {
+        /// <summary>
+        /// Dropout probability
+        /// </summary>
+        public decimal DropoutProbability;
+
+        /// <summary>
+        /// Create new dropout layer
+        /// </summary>
+        /// <param name="optimizer">optimization algorithm of this layer</param>
+        /// <param name="function">activation function of all neurons of layer</param>
+        /// <param name="inputSize">count of neurons</param>
+        /// <param name="probability">dropout probability</param>
+        public DropoutLayer(Optimizer optimizer, Activation function, int inputSize, decimal probability = 0.2M)
+        {
+            ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
+            ArgumentNullException.ThrowIfNull(function, nameof(function));
+            if (inputSize < 1)
+                throw new NNException("Input size of neural network can not be less than 1");
+            if (probability < 0M || probability > 1M)
+                throw new NNException("'probability' must be in interval [0, 1]");
+
+            DropoutProbability = probability;
+            Optimizer = optimizer;
+            CountOfInputNeurons = inputSize;
+            CountOfOutputNeurons = inputSize;
+            Size = [inputSize];
+
+            //Activation activation = new();
+            Neurons = new Neuron[inputSize];
+            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron(function);
+        }
+        
+        public override void InitializeConnections(Layer nextLayer)
+        {
+            ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
+            
+            for (int begin = 0; begin < CountOfInputNeurons; begin++)
+            {
+                var beginNeuron = Neurons[begin];
+                var endNeuron = nextLayer.Neurons[begin];
+                var connection = new UnteachableConnection(beginNeuron, endNeuron, 1M);
+                beginNeuron.AddOutputConnection(connection);
+                endNeuron.AddInputConnection(connection);
+            }
+        }
+
+        public override void Activation()
+        {
+            foreach (Neuron neuron in Neurons)
+            {
+                
+                Variable weight = neuron.OutputConnections.First().Weight;
+                weight.Value = 1;
+                neuron.Activation();
+                if (RandomGenerator.NextPositive() < DropoutProbability)
+                    weight.Value = 0;
+
+            }
+        }
+    }
+
 
     /// <summary>
     /// Provides methods for convolutional layer
@@ -1450,33 +1538,41 @@ namespace NNFramework
             RandomGenerator.SetSeed(0);
             string Value = "";
             var act = new SigmoidActivation();
-            var opt1 = new LeastSquareOptimizer(1M);
-            var opt2 = new LeastSquareOptimizer(0.005M);
-            var l1 = new ConvolutionLayer(opt1, act, 28, 28, 1, 3, 32, 1, 1);
+            var opt1 = new LeastSquareOptimizer(5M);
+            var opt2 = new LeastSquareOptimizer(0.1M);
+            var l1 = new ConvolutionLayer(opt1, act, 28, 28, 1, 4, 16, 1, 1);
             var l2 = new MaxPoolingLayer(opt1, act, l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
-            var l3 = new ConvolutionLayer(opt1, act, l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 64, 1, 1);
+            var l3 = new ConvolutionLayer(opt1, act, l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 8, 1, 1);
             var l4 = new MaxPoolingLayer(opt1, act, l3.OutputRows, l3.OutputColumns, l3.CountOfOutputChannels, 2);
             //var l5 = new ConvolutionLayer(opt1, act, l4.OutputRows, l4.OutputColumns, l3.CountOfOutputChannels, 3, 3, 1, 1);
             //var l6 = new MaxPoolingLayer(opt1, act, l5.OutputRows, l5.OutputColumns, l5.CountOfOutputChannels, 2);
-            var ln1 = new LinearLayer(opt2, act, 784, 784);
-            var ln2 = new LinearLayer(opt2, act, 784, 441);
-            var ln3 = new LinearLayer(opt2, act, 441, 10);
-            var lin1 = new LinearLayer(opt2, act, l4.CountOfOutputNeurons, 64);
+            //var ln1 = new LinearLayer(opt2, act, 784, 784);
+            //var ln2 = new LinearLayer(opt2, act, 784, 441);
+            //var ln3 = new LinearLayer(opt2, act, 441, 10);
+
+            var ln1 = new LinearLayer(opt2, act, 784, 256);
+            var drop1 = new DropoutLayer(opt2, act, 256, 0.05M);
+            var ln2 = new LinearLayer(opt2, new Activation(), 256, 128);
+            var drop2 = new DropoutLayer(opt2, act, 128, 0.01M);
+            var ln3 = new LinearLayer(opt2, new Activation(), 128, 10);
+
+            var drops1 = new DropoutLayer(opt2, act, l4.CountOfOutputNeurons, 0.05M);
+            var lin1 = new LinearLayer(opt2, new Activation(), l4.CountOfOutputNeurons, 64);
             Console.WriteLine(lin1.CountOfInputNeurons.ToString());
             
             var lin2 = new LinearLayer(opt2, act, lin1.CountOfOutputNeurons, 10);
 
             var sheduler = new ExponentialSheduler(opt2, 1M);
-            //var net = new Net(opt2, act, l1, l2, l3, l4, lin1, lin2);
-            var net = new Net(opt2, act, ln1, ln2, ln3);
+            var net = new Net(opt2, act, l1, l2, l3, l4, drops1, lin1, lin2);
+            //var net = new Net(opt2, act, ln1, drop1, ln2, drop2, ln3);
 
             string[] lines = System.IO.File.ReadAllLines("D:\\source\\NNFramework\\mnist_test.csv");
             var testCount = lines.Length;
             var test_x = new decimal[testCount][];
             var test_y = new decimal[testCount][];
             var test_y_n = new int[testCount];
-            Decimal down = 0.35M;
-            Decimal up = 0.65M;
+            decimal down = 0.4M;
+            decimal up = 0.6M;
             for (int i = 0; i < testCount; i++)
             {
                 var data = lines[i].Split(',');
@@ -1492,9 +1588,15 @@ namespace NNFramework
                 }
                 test_x[i] = data_x;
             }
-            int dataSetLength = 10000;
+            int dataSetLength = 300;
             for (int epoch = 0; epoch < 100; epoch++)
             {
+                if (epoch == 1) opt2.LearningRate = 0.05M;
+                if (epoch == 8) opt2.LearningRate = 0.02M;
+                if (epoch == 15) opt2.LearningRate = 0.01M;
+                if (epoch == 30) opt2.LearningRate = 0.005M;
+                if (epoch == 40) opt2.LearningRate = 0.002M;
+                if (epoch == 50) opt2.LearningRate = 0.001M;
                 var stopw = new Stopwatch();
                 var score = 0;
                 stopw.Start();
