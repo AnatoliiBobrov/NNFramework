@@ -61,14 +61,14 @@ namespace NNFramework
         /// </summary>
         /// <param name="input">argument of function</param>
         /// <returns></returns>
-        public virtual decimal Calculate(decimal input) => input;
+        public virtual void Calculate(Neuron neuron) => neuron.Output = neuron.Input;
 
         /// <summary>
         /// Return value of derived function in point
         /// </summary>
         /// <param name="point">point of function</param>
         /// <returns></returns>
-        public virtual decimal Derived(decimal point) => 1;
+        public virtual decimal Derived(Neuron neuron) => 1;
     }
 
     /// <summary>
@@ -76,16 +76,15 @@ namespace NNFramework
     /// </summary>
     public class SigmoidActivation : Activation
     {
-        public override decimal Calculate(decimal input) =>
-            (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * input))));
+        public override void Calculate(Neuron neuron) =>
+            neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * neuron.Input))));
 
         /// <summary>
         /// Return value of derived function in point by current value of function
         /// </summary>
         /// <param name="CurrentValue">current value of function</param>
         /// <returns></returns>
-        public override decimal Derived(decimal CurrentValue) =>
-            CurrentValue * (1 - CurrentValue);
+        public override decimal Derived(Neuron neuron) => neuron.Output * (1 - neuron.Output);
     }
 
     /// <summary>
@@ -104,15 +103,16 @@ namespace NNFramework
         /// <param name="value">negative rate</param>
         public LeakyReLUActivation(decimal value) => _value = value;
 
-        public override decimal Calculate(decimal input)
+        public override void Calculate(Neuron neuron)
         {
-            if (input > 0) return input;
-            else return _value * input;
+            decimal input = neuron.Input;
+            if (input > 0) neuron.Output = input;
+            else neuron.Output = _value * input;
         }  
            
-        public override decimal Derived(decimal point)
+        public override decimal Derived(Neuron neuron)
         {
-            if (point > 0) return 1;
+            if (neuron.Input > 0) return 1;
             else return _value;
         }
     }
@@ -122,44 +122,76 @@ namespace NNFramework
     /// </summary>
     public class ReLUActivation : Activation
     {
-        public override decimal Calculate(decimal input)
+        public override void Calculate(Neuron neuron)
         {
-            if (input > 0) return input;
-            else return 0;
+            decimal input = neuron.Input;
+            if (input > 0) neuron.Output = input;
+            else neuron.Output = 0;
         }
 
-        public override decimal Derived(decimal point)
+        public override decimal Derived(Neuron neuron)
         {
-            if (point > 0) return 1;
+            if (neuron.Input > 0) return 1;
             else return 0;
         }
     }
-
 
     /// <summary>
     /// ReLU activation function
     /// </summary>
     public class SoftmaxActivation : Activation
     {
-        public override decimal Calculate(decimal input)
+        /// <summary>
+        /// Count of neurons in layer
+        /// </summary>
+        private int _countOfNeurons;
+
+        /// <summary>
+        /// Counter for calculations
+        /// </summary>
+        private int _counter;
+
+        /// <summary>
+        /// Current neurons
+        /// </summary>
+        private Neuron[] neurons;
+
+        /// <summary>
+        /// Create new softmax activation function
+        /// </summary>
+        /// <param name="countOfNeurons">count of neurons</param>
+        public SoftmaxActivation(int countOfNeurons) 
         {
-            if (input > 0) return input;
-            else return 0;
+            _countOfNeurons = countOfNeurons;
         }
 
-        public override decimal Derived(decimal point)
+        public override void Calculate(Neuron neuron)
         {
-            if (point > 0) return 1;
-            else return 0;
+
+            neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * neuron.Input))));
+        }
+
+        public override decimal Derived(Neuron neuron)
+        {
+            return 0;
         }
     }
 
-
     /// <summary>
-    /// Provides learning of NN
+    /// Provides simple learning of NN
     /// </summary>
     public class Optimizer
     {
+        /// <summary>
+        /// Owner layer
+        /// </summary>
+        public Layer OwnerLayer;
+
+        /// <summary>
+        /// Current neurons
+        /// </summary>
+        public Neuron[] Neurons;
+
         /// <summary>
         /// Learning rate
         /// </summary>
@@ -171,37 +203,94 @@ namespace NNFramework
         /// <param name="output">output value of neuron</param>
         /// <param name="right">right value</param>
         /// <returns></returns>
-        public virtual decimal Error(decimal output, decimal right)
+        public virtual decimal Error(Neuron output, decimal right) => 0;
+
+        /// <summary>
+        /// Set criterion value of prediction
+        /// </summary>
+        /// <param name="right">right values</param>
+        public virtual void SetCriterionValue(decimal[] right)
         {
-            return 0;
+
         }
 
         /// <summary>
         /// Calculate criterion value of prediction
         /// </summary>
-        /// <param name="output">output value of neuron</param>
-        /// <param name="right">right value</param>
-        /// <returns></returns>
-        public virtual decimal CriterionValue(decimal output, decimal right)
+        public virtual void SetDerivative()
         {
-            return 0;
+
         }
 
         /// <summary>
-        /// Calculate criterion value of prediction
+        /// Create new optimizer
         /// </summary>
-        /// <param name="error">error of neuron</param>
-        /// <returns></returns>
-        public virtual decimal Derivative(decimal error)
+        /// <param name="lr">learning rate</param>
+        public Optimizer(decimal lr) => LearningRate = lr;
+
+        /// <summary>
+        /// Attach this optimizer to layer
+        /// </summary>
+        /// <param name="neurons"></param>
+        /// <param name="layer"></param>
+        public virtual void Attache(Layer layer)
         {
-            return 0;
+            ArgumentNullException.ThrowIfNull(layer, nameof(layer));
+
+            Neurons = layer.Neurons;
+            OwnerLayer = layer;
         }
+    }
+
+    /// <summary>
+    /// Optimize by least square's method
+    /// </summary>
+    public class LeastSquareOptimizer : Optimizer
+    {
+
+        /// <summary>
+        /// Array of Neurons[i].Output - right[i]
+        /// </summary>
+        private decimal[] _differences;
+
+        public override void SetCriterionValue(decimal[] right)
+        {
+            var loss = 0M;
+            for (int i = 0; i < Neurons.Length; i++)
+            {
+                var buffer = Neurons[i].Output - right[i];
+                _differences[i] = buffer;
+                buffer *= buffer / 2;
+                Neurons[i].Error = buffer;
+                //Loss += Neurons[i].Error * Neurons[i].Error / 2;
+                loss += buffer;
+            }
+            loss /= Neurons.Length;
+            OwnerLayer.Loss = loss;
+        }
+
+        public override void SetDerivative(Neuron neuron)
+        {
+
+            neuron.Error;
+        }
+        
 
         /// <summary>
         /// Create instance of optimizer
         /// </summary>
-        public Optimizer(decimal lr) => LearningRate = lr;
+        public LeastSquareOptimizer(decimal lr) : base(lr)
+        {
+
+        }
+
+        public override void Attache(Layer layer)
+        {
+            base.Attache(layer);
+            _differences = new decimal[Neurons.Length];
+        }
     }
+
 
     /// <summary>
     /// Implenents methods for learning rate sheduler
@@ -337,32 +426,7 @@ namespace NNFramework
         }
     }
 
-    /// <summary>
-    /// Optimize by least square's method
-    /// </summary>
-    public class LeastSquareOptimizer : Optimizer
-    {
-        public override decimal Error(decimal output, decimal right) => output - right;
-
-        public override decimal CriterionValue(decimal output, decimal right)
-        {
-            var error = output - right;
-            error *= error;
-            error /= 2;
-            return error;
-        }
-
-        public override decimal Derivative(decimal error) => error;
-
-        /// <summary>
-        /// Create instance of optimizer
-        /// </summary>
-        public LeastSquareOptimizer(decimal lr) : base(lr)
-        {
-
-        }
-    }
-
+    
     /// <summary>
     /// Value but reference type
     /// </summary>
@@ -514,6 +578,16 @@ namespace NNFramework
         public decimal Input = 0;
 
         /// <summary>
+        /// Current activation derivative of neuron
+        /// </summary>
+        public decimal ActivatioDerivative = 0;
+
+        /// <summary>
+        /// Current criterion derivative of neuron
+        /// </summary>
+        public decimal CriterionDerivative = 0;
+
+        /// <summary>
         /// Current derivative of neuron
         /// </summary>
         public decimal Derivative = 0;
@@ -598,7 +672,8 @@ namespace NNFramework
         /// Set derivative
         /// </summary>
         /// <returns></returns>
-        public virtual void SetDerivative() => Derivative = OwnerLayer.Optimizer.Derivative(Error) * ActivationFunction.Derived(Output);
+        public virtual void SetDerivative() => 
+            Derivative = ActivatioDerivative * CriterionDerivative;
 
         /// <summary>
         /// Update weights
@@ -619,7 +694,7 @@ namespace NNFramework
         {
             if (InputConnections.Count != 0)
             {
-                Output = ActivationFunction.Calculate(Input);
+                ActivationFunction.Calculate(this);
             }
             else
             {
@@ -794,13 +869,8 @@ namespace NNFramework
             ArgumentNullException.ThrowIfNull(right, nameof(right));
             if (right.Length != Neurons.Length)
                 throw new NNException("Parameter 'right' size is not equal count of neurons");
-            Loss = 0M;
-            for (int i = 0; i < Neurons.Length; i++)
-            {
-                Neurons[i].Error = Neurons[i].Output - right[i];
-                Loss += Neurons[i].Error * Neurons[i].Error / 2;
-            }
-            Loss /= CountOfInputNeurons;
+
+            Optimizer.SetCriterionValue(right);
         }
         
         /// <summary>
@@ -833,6 +903,8 @@ namespace NNFramework
         /// <param name="net">Net which contains that layer</param>
         public virtual void UpdateWeights(Net net)
         {
+            ActivationFunction.Derived();
+            Optimizer.Derivative();
             foreach (Neuron i in Neurons) i.UpdateWeights();
         }
 
@@ -968,7 +1040,6 @@ namespace NNFramework
             }
         }
     }
-
 
     /// <summary>
     /// Provides methods for convolutional layer
@@ -1552,19 +1623,19 @@ namespace NNFramework
 
             var ln1 = new LinearLayer(opt2, act, 784, 256);
             var drop1 = new DropoutLayer(opt2, act, 256, 0.05M);
-            var ln2 = new LinearLayer(opt2, new Activation(), 256, 128);
+            var ln2 = new LinearLayer(opt2, act, 256, 128);
             var drop2 = new DropoutLayer(opt2, act, 128, 0.01M);
-            var ln3 = new LinearLayer(opt2, new Activation(), 128, 10);
+            var ln3 = new LinearLayer(opt2, act, 128, 10);
 
             var drops1 = new DropoutLayer(opt2, act, l4.CountOfOutputNeurons, 0.05M);
             var lin1 = new LinearLayer(opt2, new Activation(), l4.CountOfOutputNeurons, 64);
             Console.WriteLine(lin1.CountOfInputNeurons.ToString());
             
-            var lin2 = new LinearLayer(opt2, act, lin1.CountOfOutputNeurons, 10);
+            var lin2 = new LinearLayer(opt2, new SoftmaxActivation(10), lin1.CountOfOutputNeurons, 10);
 
             var sheduler = new ExponentialSheduler(opt2, 1M);
-            var net = new Net(opt2, act, l1, l2, l3, l4, drops1, lin1, lin2);
-            //var net = new Net(opt2, act, ln1, drop1, ln2, drop2, ln3);
+            //var net = new Net(opt2, act, l1, l2, l3, l4, drops1, lin1, lin2);
+            var net = new Net(opt2, act, ln1, ln2, ln3);
 
             string[] lines = System.IO.File.ReadAllLines("D:\\source\\NNFramework\\mnist_test.csv");
             var testCount = lines.Length;
@@ -1588,7 +1659,7 @@ namespace NNFramework
                 }
                 test_x[i] = data_x;
             }
-            int dataSetLength = 300;
+            int dataSetLength = 10;
             for (int epoch = 0; epoch < 100; epoch++)
             {
                 if (epoch == 1) opt2.LearningRate = 0.05M;
