@@ -57,6 +57,21 @@ namespace NNFramework
     public class Activation
     {
         /// <summary>
+        /// Indicates whether the optimizer is attached
+        /// </summary>
+        private bool _isAttached;
+
+        /// <summary>
+        /// Owner layer
+        /// </summary>
+        public Layer OwnerLayer;
+
+        /// <summary>
+        /// Neurons
+        /// </summary>
+        public Neuron[] Neurons;
+
+        /// <summary>
         /// Return value calculated from input argument
         /// </summary>
         /// <param name="input">argument of function</param>
@@ -69,6 +84,21 @@ namespace NNFramework
         /// <param name="point">point of function</param>
         /// <returns></returns>
         public virtual decimal Derived(Neuron neuron) => 1;
+
+        /// <summary>
+        /// Attach this activation function to layer
+        /// </summary>
+        /// <param name="layer">Owner layer</param>
+        public virtual void Attache(Layer layer)
+        {
+            ArgumentNullException.ThrowIfNull(layer, nameof(layer));
+            if (_isAttached)
+                throw new NNException("This activation function is already attached");
+
+            _isAttached = true;
+            Neurons = layer.Neurons;
+            OwnerLayer = layer;
+        }
     }
 
     /// <summary>
@@ -183,6 +213,11 @@ namespace NNFramework
     public class Optimizer
     {
         /// <summary>
+        /// Indicates whether the optimizer is attached
+        /// </summary>
+        private bool _isAttached;
+
+        /// <summary>
         /// Owner layer
         /// </summary>
         public Layer OwnerLayer;
@@ -231,12 +266,14 @@ namespace NNFramework
         /// <summary>
         /// Attach this optimizer to layer
         /// </summary>
-        /// <param name="neurons"></param>
-        /// <param name="layer"></param>
+        /// <param name="layer">Owner layer</param>
         public virtual void Attache(Layer layer)
         {
             ArgumentNullException.ThrowIfNull(layer, nameof(layer));
+            if (_isAttached)
+                throw new NNException("This optimizer is already attached");
 
+            _isAttached = true;
             Neurons = layer.Neurons;
             OwnerLayer = layer;
         }
@@ -247,19 +284,13 @@ namespace NNFramework
     /// </summary>
     public class LeastSquareOptimizer : Optimizer
     {
-
-        /// <summary>
-        /// Array of Neurons[i].Output - right[i]
-        /// </summary>
-        private decimal[] _differences;
-
         public override void SetCriterionValue(decimal[] right)
         {
             var loss = 0M;
             for (int i = 0; i < Neurons.Length; i++)
             {
                 var buffer = Neurons[i].Output - right[i];
-                _differences[i] = buffer;
+                Neurons[i].Error = buffer;
                 buffer *= buffer / 2;
                 Neurons[i].Error = buffer;
                 //Loss += Neurons[i].Error * Neurons[i].Error / 2;
@@ -269,10 +300,10 @@ namespace NNFramework
             OwnerLayer.Loss = loss;
         }
 
-        public override void SetDerivative(Neuron neuron)
+        public override void SetDerivative()
         {
-
-            neuron.Error;
+            foreach (Neuron neuron in Neurons)
+                neuron.CriterionDerivative = neuron.Error;
         }
         
 
@@ -284,11 +315,6 @@ namespace NNFramework
 
         }
 
-        public override void Attache(Layer layer)
-        {
-            base.Attache(layer);
-            _differences = new decimal[Neurons.Length];
-        }
     }
 
 
@@ -520,7 +546,7 @@ namespace NNFramework
         /// <summary>
         /// Get error of output neuron
         /// </summary>
-        public decimal GetError() => Weight.Value * Output.Error;
+        public decimal GetError() => Weight.Value * Output.Derivative;
     }
 
     /// <summary>
@@ -568,11 +594,6 @@ namespace NNFramework
         public Layer OwnerLayer;
 
         /// <summary>
-        /// Logistical function of neuron
-        /// </summary>
-        public Activation ActivationFunction;
-
-        /// <summary>
         /// Current input value of neuron
         /// </summary>
         public decimal Input = 0;
@@ -580,7 +601,7 @@ namespace NNFramework
         /// <summary>
         /// Current activation derivative of neuron
         /// </summary>
-        public decimal ActivatioDerivative = 0;
+        public decimal ActivationDerivative = 0;
 
         /// <summary>
         /// Current criterion derivative of neuron
@@ -615,9 +636,10 @@ namespace NNFramework
         /// <summary>
         /// Create instance ot neuron 
         /// </summary>
-        /// <param name="function">Logistic function</param>
-        public Neuron(Activation function) =>
-            ActivationFunction = function;
+        public Neuron()
+        {
+
+        }
 
         /// <summary>
         /// Get values to next layer
@@ -673,7 +695,7 @@ namespace NNFramework
         /// </summary>
         /// <returns></returns>
         public virtual void SetDerivative() => 
-            Derivative = ActivatioDerivative * CriterionDerivative;
+            Derivative = ActivationDerivative * CriterionDerivative;
 
         /// <summary>
         /// Update weights
@@ -759,6 +781,11 @@ namespace NNFramework
     /// </summary>
     public class Layer
     {
+        /// <summary>
+        /// Indicates whethew this layer is output
+        /// </summary>
+        private bool _isOutput;
+
         /// <summary>
         /// Count if output neurons
         /// </summary>
@@ -903,8 +930,8 @@ namespace NNFramework
         /// <param name="net">Net which contains that layer</param>
         public virtual void UpdateWeights(Net net)
         {
-            ActivationFunction.Derived();
-            Optimizer.Derivative();
+            ActivationFunction.SetDerivative();
+            Optimizer.SetDerivative();
             foreach (Neuron i in Neurons) i.UpdateWeights();
         }
 
