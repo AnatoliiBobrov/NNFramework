@@ -74,16 +74,20 @@ namespace NNFramework
         /// <summary>
         /// Return value calculated from input argument
         /// </summary>
-        /// <param name="input">argument of function</param>
-        /// <returns></returns>
-        public virtual void Calculate(Neuron neuron) => neuron.Output = neuron.Input;
+        public virtual void Calculate()
+        {
+            foreach (Neuron neuron in Neurons)
+                neuron.Output = neuron.Input;
+        }
 
         /// <summary>
         /// Return value of derived function in point
         /// </summary>
-        /// <param name="point">point of function</param>
-        /// <returns></returns>
-        public virtual decimal Derived(Neuron neuron) => 1;
+        public virtual void SetDerivative()
+        {
+            foreach (Neuron neuron in Neurons)
+                neuron.ActivationDerivative = 1;
+        }
 
         /// <summary>
         /// Attach this activation function to layer
@@ -106,15 +110,17 @@ namespace NNFramework
     /// </summary>
     public class SigmoidActivation : Activation
     {
-        public override void Calculate(Neuron neuron) =>
-            neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * neuron.Input))));
-
-        /// <summary>
-        /// Return value of derived function in point by current value of function
-        /// </summary>
-        /// <param name="CurrentValue">current value of function</param>
-        /// <returns></returns>
-        public override decimal Derived(Neuron neuron) => neuron.Output * (1 - neuron.Output);
+        public override void Calculate()
+        {
+            foreach (Neuron neuron in Neurons)
+                neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * neuron.Input))));
+        }
+            
+        public override void SetDerivative()
+        {
+            foreach (Neuron neuron in Neurons)
+                neuron.ActivationDerivative = neuron.Output * (1 - neuron.Output);
+        }
     }
 
     /// <summary>
@@ -133,17 +139,23 @@ namespace NNFramework
         /// <param name="value">negative rate</param>
         public LeakyReLUActivation(decimal value) => _value = value;
 
-        public override void Calculate(Neuron neuron)
+        public override void Calculate()
         {
-            decimal input = neuron.Input;
-            if (input > 0) neuron.Output = input;
-            else neuron.Output = _value * input;
-        }  
-           
-        public override decimal Derived(Neuron neuron)
+            foreach (Neuron neuron in Neurons)
+            {
+                decimal input = neuron.Input;
+                if (input > 0) neuron.Output = input;
+                else neuron.Output = _value * input;
+            }
+        }
+
+        public override void SetDerivative()
         {
-            if (neuron.Input > 0) return 1;
-            else return _value;
+            foreach (Neuron neuron in Neurons)
+            {
+                if (neuron.Input > 0) neuron.ActivationDerivative = 1;
+                else neuron.ActivationDerivative = _value;
+            }
         }
     }
 
@@ -152,17 +164,23 @@ namespace NNFramework
     /// </summary>
     public class ReLUActivation : Activation
     {
-        public override void Calculate(Neuron neuron)
+        public override void Calculate()
         {
-            decimal input = neuron.Input;
-            if (input > 0) neuron.Output = input;
-            else neuron.Output = 0;
+            foreach (Neuron neuron in Neurons)
+            {
+                decimal input = neuron.Input;
+                if (input > 0) neuron.Output = input;
+                else neuron.Output = 0;
+            }
         }
 
-        public override decimal Derived(Neuron neuron)
+        public override void SetDerivative()
         {
-            if (neuron.Input > 0) return 1;
-            else return 0;
+            foreach (Neuron neuron in Neurons)
+            {
+                if (neuron.Input > 0) neuron.ActivationDerivative = 1;
+                else neuron.ActivationDerivative = 0;
+            }
         }
     }
 
@@ -182,28 +200,55 @@ namespace NNFramework
         private int _counter;
 
         /// <summary>
-        /// Current neurons
+        /// Dinominator for calculations
         /// </summary>
-        private Neuron[] neurons;
+        private decimal _dinominator;
 
         /// <summary>
-        /// Create new softmax activation function
+        /// Numenators for calculations
         /// </summary>
-        /// <param name="countOfNeurons">count of neurons</param>
-        public SoftmaxActivation(int countOfNeurons) 
+        private decimal[] _numenators;
+
+        public override void Calculate()
         {
-            _countOfNeurons = countOfNeurons;
+            _dinominator = 0;
+            for (int i = 0; i < _countOfNeurons; i++)
+            {
+                decimal numenator = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * Neurons[i].Input))));
+                _numenators[i] = numenator;
+                _dinominator += numenator;
+            }
+            for (int i = 0; i < _countOfNeurons; i++)
+                Neurons[i].Output = _numenators[i] / _dinominator;
         }
 
-        public override void Calculate(Neuron neuron)
+        public override void SetDerivative()
         {
-
-            neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * neuron.Input))));
+            bool wasNoneZero = false;
+            for (int i = 0; i < _countOfNeurons; i++)
+            {
+                Neuron neuron = Neurons[i];
+                if (neuron.Error > 0)
+                {
+                    if (wasNoneZero)
+                        throw new NNException("There was more than one category");
+                    wasNoneZero = true;
+                    neuron.ActivationDerivative = neuron.Output * (1 - neuron.Output);
+                }
+                else
+                {
+                    neuron.ActivationDerivative = - neuron.Output * _numenators[i] / _dinominator;
+                }
+            }
+            if (!wasNoneZero)
+                throw new NNException("There was less than one category");
         }
 
-        public override decimal Derived(Neuron neuron)
+        public override void Attache(Layer layer)
         {
-            return 0;
+            base.Attache(layer);
+            _countOfNeurons = Neurons.Length;
+            _numenators = new decimal[_countOfNeurons];
         }
     }
 
@@ -231,14 +276,6 @@ namespace NNFramework
         /// Learning rate
         /// </summary>
         public decimal LearningRate;
-
-        /// <summary>
-        /// Calculate error of prediction
-        /// </summary>
-        /// <param name="output">output value of neuron</param>
-        /// <param name="right">right value</param>
-        /// <returns></returns>
-        public virtual decimal Error(Neuron output, decimal right) => 0;
 
         /// <summary>
         /// Set criterion value of prediction
@@ -306,7 +343,6 @@ namespace NNFramework
                 neuron.CriterionDerivative = neuron.Error;
         }
         
-
         /// <summary>
         /// Create instance of optimizer
         /// </summary>
@@ -314,9 +350,7 @@ namespace NNFramework
         {
 
         }
-
     }
-
 
     /// <summary>
     /// Implenents methods for learning rate sheduler
