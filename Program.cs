@@ -668,14 +668,6 @@ namespace NNFramework
         public List<Connection> OutputConnections = [];
 
         /// <summary>
-        /// Create instance ot neuron 
-        /// </summary>
-        public Neuron()
-        {
-
-        }
-
-        /// <summary>
         /// Get values to next layer
         /// </summary>
         public virtual void GoForward()
@@ -774,7 +766,7 @@ namespace NNFramework
         /// Create instance ot neuron 
         /// </summary>
         /// <param name="function">Logistic function</param>
-        public ConvolutionalNeuron(Activation function, int devider) : base(function)
+        public ConvolutionalNeuron(int devider)
         {
             if (devider < 1) throw new NNException("Devider must be more then 1");
             _devider = devider;
@@ -796,14 +788,6 @@ namespace NNFramework
     /// </summary>
     public class MaxPoolingNeuron : Neuron
     {
-        /// <summary>
-        /// Create instance ot neuron 
-        /// </summary>
-        /// <param name="function">Logistic function</param>
-        public MaxPoolingNeuron(Activation function) : base(function)
-        {
-        }
-
         public override void Activation()
         {
             if (OutputConnections.Count != 0) GoForward();
@@ -1004,13 +988,15 @@ namespace NNFramework
                 throw new NNException("Output size of neural network can not be less than 1");
 
             Optimizer = optimizer;
+            ActivationFunction = function;
             CountOfInputNeurons = inputSize;
             CountOfOutputNeurons = outputSize;
             Size = [inputSize];
             Outputs = new Variable[outputSize];
             for (int i = 0; i < outputSize; i++) Outputs[i] = new Variable(0);
             Neurons = new Neuron[inputSize];
-            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron(function);
+            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron();
+            ActivationFunction.Attache(this);
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -1068,9 +1054,10 @@ namespace NNFramework
             CountOfOutputNeurons = inputSize;
             Size = [inputSize];
 
-            //Activation activation = new();
             Neurons = new Neuron[inputSize];
-            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron(function);
+            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron();
+            ActivationFunction = function;
+            ActivationFunction.Attache(this);
         }
         
         public override void InitializeConnections(Layer nextLayer)
@@ -1180,7 +1167,9 @@ namespace NNFramework
             Size = [countOfChannels, countOfRows, countOfColumns];
             Neurons = new Neuron[CountOfInputNeurons];
             for (int i = 0; i < CountOfInputNeurons; i++)
-                Neurons[i] = new ConvolutionalNeuron(function, countInOutputChannel);
+                Neurons[i] = new ConvolutionalNeuron(countInOutputChannel);
+            ActivationFunction = function;
+            ActivationFunction.Attache(this);
         }
 
         /// <summary>
@@ -1357,7 +1346,9 @@ namespace NNFramework
         public MaxPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea)
         {
             for (int i = 0; i < CountOfInputNeurons; i++)
-                Neurons[i] = new MaxPoolingNeuron(function);
+                Neurons[i] = new MaxPoolingNeuron();
+            ActivationFunction = function;
+            ActivationFunction.Attache(this);
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -1454,7 +1445,9 @@ namespace NNFramework
         public SumPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2) : base(optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea)
         {
             for (int i = 0; i < CountOfInputNeurons; i++)
-                Neurons[i] = new Neuron(function);
+                Neurons[i] = new Neuron();
+            ActivationFunction = function;
+            ActivationFunction.Attache(this);
         }
 
         /// <summary>
@@ -1672,27 +1665,27 @@ namespace NNFramework
             var act = new SigmoidActivation();
             var opt1 = new LeastSquareOptimizer(5M);
             var opt2 = new LeastSquareOptimizer(0.1M);
-            var l1 = new ConvolutionLayer(opt1, act, 28, 28, 1, 4, 16, 1, 1);
-            var l2 = new MaxPoolingLayer(opt1, act, l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
-            var l3 = new ConvolutionLayer(opt1, act, l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 8, 1, 1);
-            var l4 = new MaxPoolingLayer(opt1, act, l3.OutputRows, l3.OutputColumns, l3.CountOfOutputChannels, 2);
+            var l1 = new ConvolutionLayer(opt1, new SigmoidActivation(), 28, 28, 1, 4, 16, 1, 1);
+            var l2 = new MaxPoolingLayer(opt1, new SigmoidActivation(), l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
+            var l3 = new ConvolutionLayer(opt1, new SigmoidActivation(), l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 8, 1, 1);
+            var l4 = new MaxPoolingLayer(opt1, new SigmoidActivation(), l3.OutputRows, l3.OutputColumns, l3.CountOfOutputChannels, 2);
             //var l5 = new ConvolutionLayer(opt1, act, l4.OutputRows, l4.OutputColumns, l3.CountOfOutputChannels, 3, 3, 1, 1);
             //var l6 = new MaxPoolingLayer(opt1, act, l5.OutputRows, l5.OutputColumns, l5.CountOfOutputChannels, 2);
             //var ln1 = new LinearLayer(opt2, act, 784, 784);
             //var ln2 = new LinearLayer(opt2, act, 784, 441);
             //var ln3 = new LinearLayer(opt2, act, 441, 10);
 
-            var ln1 = new LinearLayer(opt2, act, 784, 256);
-            var drop1 = new DropoutLayer(opt2, act, 256, 0.05M);
-            var ln2 = new LinearLayer(opt2, act, 256, 128);
-            var drop2 = new DropoutLayer(opt2, act, 128, 0.01M);
-            var ln3 = new LinearLayer(opt2, act, 128, 10);
+            var ln1 = new LinearLayer(opt2, new SigmoidActivation(), 784, 256);
+            var drop1 = new DropoutLayer(opt2, new SigmoidActivation(), 256, 0.05M);
+            var ln2 = new LinearLayer(opt2, new SigmoidActivation(), 256, 128);
+            var drop2 = new DropoutLayer(opt2, new SigmoidActivation(), 128, 0.01M);
+            var ln3 = new LinearLayer(opt2, new SigmoidActivation(), 128, 10);
 
-            var drops1 = new DropoutLayer(opt2, act, l4.CountOfOutputNeurons, 0.05M);
+            var drops1 = new DropoutLayer(opt2, new SigmoidActivation(), l4.CountOfOutputNeurons, 0.05M);
             var lin1 = new LinearLayer(opt2, new Activation(), l4.CountOfOutputNeurons, 64);
             Console.WriteLine(lin1.CountOfInputNeurons.ToString());
             
-            var lin2 = new LinearLayer(opt2, new SoftmaxActivation(10), lin1.CountOfOutputNeurons, 10);
+            var lin2 = new LinearLayer(opt2, new SoftmaxActivation(), lin1.CountOfOutputNeurons, 10);
 
             var sheduler = new ExponentialSheduler(opt2, 1M);
             //var net = new Net(opt2, act, l1, l2, l3, l4, drops1, lin1, lin2);
