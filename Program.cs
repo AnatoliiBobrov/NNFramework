@@ -72,7 +72,7 @@ namespace NNFramework
         public Neuron[] Neurons;
 
         /// <summary>
-        /// Return value calculated from input argument
+        /// Calculate output values 
         /// </summary>
         public virtual void Calculate()
         {
@@ -672,19 +672,8 @@ namespace NNFramework
         /// </summary>
         public virtual void GoForward()
         {
-            if (OutputConnections.Count != 0)
-                foreach (Connection i in OutputConnections)
-                    i.GoForward();
-        }
-
-        /// <summary>
-        /// Calculate an output value
-        /// </summary>
-        public virtual void Activation()
-        {
-            CalculateOutput();
-            if (OutputConnections.Count != 0)
-                GoForward();
+            foreach (Connection i in OutputConnections)
+                i.GoForward();
         }
 
         /// <summary>
@@ -733,23 +722,7 @@ namespace NNFramework
             var lr = OwnerLayer.Optimizer.LearningRate;
             foreach (Connection i in InputConnections)
                 i.UpdateWeight(lr, Derivative);
-        }
-
-        /// <summary>
-        /// Calculate output value
-        /// </summary>
-        public virtual void CalculateOutput()
-        {
-            if (InputConnections.Count != 0)
-            {
-                ActivationFunction.Calculate(this);
-            }
-            else
-            {
-                Output = Input;
-            }
-        }
-            
+        }      
     }
 
     /// <summary>
@@ -784,25 +757,14 @@ namespace NNFramework
     }
 
     /// <summary>
-    /// Provides methods for max pooling neurons
-    /// </summary>
-    public class MaxPoolingNeuron : Neuron
-    {
-        public override void Activation()
-        {
-            if (OutputConnections.Count != 0) GoForward();
-        }
-    }
-
-    /// <summary>
     /// Provides methods for layer of fully connected neurons
     /// </summary>
     public class Layer
     {
         /// <summary>
-        /// Indicates whethew this layer is output
+        /// Indicates whether this layer is output
         /// </summary>
-        private bool _isOutput;
+        public bool IsOutput;
 
         /// <summary>
         /// Count if output neurons
@@ -853,7 +815,11 @@ namespace NNFramework
         /// Set random weight of connections
         /// </summary>
         /// <param name="nextLayer">neighbour layer</param>
-        public virtual void InitializeConnections(Layer nextLayer) { }
+        public virtual void InitializeConnections(Layer nextLayer)
+        {
+            if (IsOutput)
+                throw new NNException("Cannot to initialize connections of output layer");
+        }
 
         /// <summary>
         /// Set weights
@@ -891,8 +857,8 @@ namespace NNFramework
         /// <returns>array of output values</returns>
         public virtual decimal[] GetOutputs()
         {
-            var result = new decimal[Neurons.Length];
-            for (int i = 0; i < Neurons.Length; i++)
+            var result = new decimal[CountOfInputNeurons];
+            for (int i = 0; i < CountOfInputNeurons; i++)
                 result[i] = Neurons[i].Output;
             return result;
         }
@@ -939,7 +905,11 @@ namespace NNFramework
         /// </summary>
         public virtual void Activation()
         {
-            foreach (Neuron i in Neurons) i.Activation();
+            ActivationFunction.Calculate();
+            if (!IsOutput)
+            {
+                foreach (Neuron i in Neurons) i.GoForward();
+            }
         }
 
         /// <summary>
@@ -962,7 +932,12 @@ namespace NNFramework
             foreach (Neuron neuron in Neurons) neuron.OwnerLayer = this;
         }
 
-        
+        /// <summary>
+        /// Create new layer
+        /// </summary>
+        /// <param name="isOutput">Indicates whether this layer is output</param>
+        public Layer(bool isOutput)
+            => IsOutput = isOutput;
     }
 
     /// <summary>
@@ -978,7 +953,7 @@ namespace NNFramework
         /// <param name="inputSize">count of neurons</param>
         /// <param name="outputSize">count of neurons in next layer</param>
         /// <exception cref="NNException"></exception>
-        public LinearLayer(Optimizer optimizer, Activation function, int inputSize, int outputSize)
+        public LinearLayer(Optimizer optimizer, Activation function, int inputSize, int outputSize, bool isOutput = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1003,6 +978,7 @@ namespace NNFramework
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
 
+            base.InitializeConnections(nextLayer);
             int countOfWeights = CountOfInputNeurons * CountOfOutputNeurons;
             Weights = new Variable[countOfWeights];
             for (int i = 0; i < countOfWeights; i++) Weights[i] = new Variable();
@@ -1039,7 +1015,7 @@ namespace NNFramework
         /// <param name="function">activation function of all neurons of layer</param>
         /// <param name="inputSize">count of neurons</param>
         /// <param name="probability">dropout probability</param>
-        public DropoutLayer(Optimizer optimizer, Activation function, int inputSize, decimal probability = 0.2M)
+        public DropoutLayer(Optimizer optimizer, Activation function, int inputSize, decimal probability = 0.2M, bool isOutput = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1063,7 +1039,8 @@ namespace NNFramework
         public override void InitializeConnections(Layer nextLayer)
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
-            
+
+            base.InitializeConnections(nextLayer);
             for (int begin = 0; begin < CountOfInputNeurons; begin++)
             {
                 var beginNeuron = Neurons[begin];
@@ -1077,14 +1054,13 @@ namespace NNFramework
         public override void Activation()
         {
             foreach (Neuron neuron in Neurons)
-            {
-                
-                Variable weight = neuron.OutputConnections.First().Weight;
-                weight.Value = 1;
-                neuron.Activation();
-                if (RandomGenerator.NextPositive() < DropoutProbability)
-                    weight.Value = 0;
+                neuron.OutputConnections.First().Weight.Value = 1;
+            base.Activation();
 
+            foreach (Neuron neuron in Neurons)
+            {
+                if (RandomGenerator.NextPositive() < DropoutProbability)
+                    neuron.OutputConnections.First().Weight.Value = 0;
             }
         }
     }
@@ -1146,7 +1122,7 @@ namespace NNFramework
         /// <param name="countOfMasks">count of mask per channel</param>
         /// <param name="stride">stride of convolution</param>
         /// <param name="padding">zero padding of edges</param>
-        public ConvolutionLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int maskSize = 3, int countOfMasks = 3, int stride = 1, int padding = 0)
+        public ConvolutionLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int maskSize = 3, int countOfMasks = 3, int stride = 1, int padding = 0, bool isOutput = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1204,6 +1180,7 @@ namespace NNFramework
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
 
+            base.InitializeConnections(nextLayer);
             ///[countOfChannels, countOfRows, countOfColumns]
             var weightsCount = MaskSize * MaskSize * Size[0] * CountOfMasks;
             Weights = new Variable[weightsCount];
@@ -1288,7 +1265,7 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public PoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2)
+        public PoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1343,10 +1320,10 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public MaxPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea)
+        public MaxPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput)
         {
             for (int i = 0; i < CountOfInputNeurons; i++)
-                Neurons[i] = new MaxPoolingNeuron();
+                Neurons[i] = new Neuron();
             ActivationFunction = function;
             ActivationFunction.Attache(this);
         }
@@ -1355,6 +1332,7 @@ namespace NNFramework
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
 
+            base.InitializeConnections(nextLayer);
             NextLayer = nextLayer;
             int cnHelp1 = 0;
             int currentENNumber = 0;
@@ -1383,6 +1361,7 @@ namespace NNFramework
 
         public override void Activation()
         {
+            ActivationFunction.Calculate();
             int cnHelp1 = 0;
             int currentENNumber = 0;
             //[countOfChannels, countOfRows, countOfColumns]
@@ -1405,7 +1384,11 @@ namespace NNFramework
                                 if ((rHelp + poolRow < Size[1]) && (cHelp + poolColumn < Size[2]))
                                 {
                                     Neuron neuron = Neurons[currentBNNumber + poolRow * Size[2] + poolColumn];
-                                    neuron.CalculateOutput();
+                                    
+                                    
+                                    //----------------------neuron.CalculateOutput();
+
+
                                     if (neuron.Output > maxValue.Output) maxValue = neuron;
                                 }
                             }
@@ -1414,7 +1397,11 @@ namespace NNFramework
                         connection.Input.OutputConnections.RemoveAt(0);
                         connection.Input = maxValue;
                         maxValue.OutputConnections.Add(connection);
-                        maxValue.Activation();
+
+
+                        //-------------------maxValue.Activation(); 
+
+
                         currentBNNumber += PoolingSize;
                         currentENNumber++;
                         cHelp += PoolingSize;
@@ -1424,6 +1411,8 @@ namespace NNFramework
                 }
                 cnHelp1 += CountInChannel;
             }
+            foreach (Neuron neuron in Neurons)
+                neuron.GoForward();
         }
     }
 
@@ -1442,7 +1431,7 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public SumPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2) : base(optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea)
+        public SumPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base(optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput)
         {
             for (int i = 0; i < CountOfInputNeurons; i++)
                 Neurons[i] = new Neuron();
@@ -1458,6 +1447,8 @@ namespace NNFramework
         {
             ArgumentNullException.ThrowIfNull(nextLayer, nameof(nextLayer));
 
+
+            base.InitializeConnections(nextLayer);
             NextLayer = nextLayer;
             int cnHelp1 = 0;
             int currentENNumber = 0;
@@ -1519,7 +1510,7 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public AveragePoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea)
+        public AveragePoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput)
         {
         }
 
@@ -1576,7 +1567,7 @@ namespace NNFramework
                 Layers[i].InitializeConnections(Layers[i + 1]);
             Layer lastLayer = Layers.Last();
             int lOutputs = lastLayer.CountOfOutputNeurons;
-            LinearLayer newLast = new(lastOptimizer, lastActivation, lOutputs, lOutputs);
+            LinearLayer newLast = new(lastOptimizer, lastActivation, lOutputs, lOutputs, true);
             lastLayer.InitializeConnections(newLast);
             Layers.Add(newLast);
             foreach (Layer layer in Layers) layer.SetOwnerLayer();
@@ -1688,8 +1679,8 @@ namespace NNFramework
             var lin2 = new LinearLayer(opt2, new SoftmaxActivation(), lin1.CountOfOutputNeurons, 10);
 
             var sheduler = new ExponentialSheduler(opt2, 1M);
-            //var net = new Net(opt2, act, l1, l2, l3, l4, drops1, lin1, lin2);
-            var net = new Net(opt2, act, ln1, ln2, ln3);
+            //var net = new Net(opt2, new Activation(), l1, l2, l3, l4, drops1, lin1, lin2);
+            var net = new Net(opt2, new Activation(), ln1, ln2, ln3);
 
             string[] lines = System.IO.File.ReadAllLines("D:\\source\\NNFramework\\mnist_test.csv");
             var testCount = lines.Length;
