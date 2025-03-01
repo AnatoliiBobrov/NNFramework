@@ -263,14 +263,14 @@ namespace NNFramework
         private bool _isAttached;
 
         /// <summary>
-        /// Owner layer
-        /// </summary>
-        public Layer OwnerLayer;
-
-        /// <summary>
         /// Current neurons
         /// </summary>
         public Neuron[] Neurons;
+
+        /// <summary>
+        /// Owner layer
+        /// </summary>
+        public Layer OwnerLayer;
 
         /// <summary>
         /// Learning rate
@@ -308,7 +308,7 @@ namespace NNFramework
         {
             ArgumentNullException.ThrowIfNull(layer, nameof(layer));
             if (_isAttached)
-                throw new NNException("This optimizer is already attached");
+                throw new NNException("This activation function is already attached");
 
             _isAttached = true;
             Neurons = layer.Neurons;
@@ -915,8 +915,7 @@ namespace NNFramework
         /// <summary>
         /// Update weights
         /// </summary>
-        /// <param name="net">Net which contains that layer</param>
-        public virtual void UpdateWeights(Net net)
+        public virtual void UpdateWeights()
         {
             ActivationFunction.SetDerivative();
             Optimizer.SetDerivative();
@@ -972,6 +971,7 @@ namespace NNFramework
             Neurons = new Neuron[inputSize];
             for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron();
             ActivationFunction.Attache(this);
+            optimizer.Attache(this);
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -1034,6 +1034,7 @@ namespace NNFramework
             for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron();
             ActivationFunction = function;
             ActivationFunction.Attache(this);
+            optimizer.Attache(this);
         }
         
         public override void InitializeConnections(Layer nextLayer)
@@ -1146,6 +1147,7 @@ namespace NNFramework
                 Neurons[i] = new ConvolutionalNeuron(countInOutputChannel);
             ActivationFunction = function;
             ActivationFunction.Attache(this);
+            optimizer.Attache(this);
         }
 
         /// <summary>
@@ -1326,6 +1328,7 @@ namespace NNFramework
                 Neurons[i] = new Neuron();
             ActivationFunction = function;
             ActivationFunction.Attache(this);
+            optimizer.Attache(this);
         }
 
         public override void InitializeConnections(Layer nextLayer)
@@ -1437,6 +1440,7 @@ namespace NNFramework
                 Neurons[i] = new Neuron();
             ActivationFunction = function;
             ActivationFunction.Attache(this);
+            optimizer.Attache(this);
         }
 
         /// <summary>
@@ -1617,7 +1621,7 @@ namespace NNFramework
         public void UpdateWeights()
         {
             for (int i = Layers.Count - 1; i > 0; i--)
-                Layers[i].UpdateWeights(this);
+                Layers[i].UpdateWeights();
         }
 
         /// <summary>
@@ -1653,42 +1657,43 @@ namespace NNFramework
         {
             RandomGenerator.SetSeed(0);
             string Value = "";
-            var act = new SigmoidActivation();
-            var opt1 = new LeastSquareOptimizer(5M);
-            var opt2 = new LeastSquareOptimizer(0.1M);
-            var l1 = new ConvolutionLayer(opt1, new SigmoidActivation(), 28, 28, 1, 4, 16, 1, 1);
-            var l2 = new MaxPoolingLayer(opt1, new SigmoidActivation(), l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
-            var l3 = new ConvolutionLayer(opt1, new SigmoidActivation(), l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 8, 1, 1);
-            var l4 = new MaxPoolingLayer(opt1, new SigmoidActivation(), l3.OutputRows, l3.OutputColumns, l3.CountOfOutputChannels, 2);
+            decimal lr1 = 5M;
+            decimal lr2 = 50M;
+            var opt2 = new LeastSquareOptimizer(lr2);
+            var l1 = new ConvolutionLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), 28, 28, 1, 4, 16, 1, 1);
+            var l2 = new MaxPoolingLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
+            var l3 = new ConvolutionLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 8, 1, 1);
+            var l4 = new MaxPoolingLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), l3.OutputRows, l3.OutputColumns, l3.CountOfOutputChannels, 2);
             //var l5 = new ConvolutionLayer(opt1, act, l4.OutputRows, l4.OutputColumns, l3.CountOfOutputChannels, 3, 3, 1, 1);
             //var l6 = new MaxPoolingLayer(opt1, act, l5.OutputRows, l5.OutputColumns, l5.CountOfOutputChannels, 2);
             //var ln1 = new LinearLayer(opt2, act, 784, 784);
             //var ln2 = new LinearLayer(opt2, act, 784, 441);
             //var ln3 = new LinearLayer(opt2, act, 441, 10);
 
-            var ln1 = new LinearLayer(opt2, new SigmoidActivation(), 784, 256);
-            var drop1 = new DropoutLayer(opt2, new SigmoidActivation(), 256, 0.05M);
-            var ln2 = new LinearLayer(opt2, new SigmoidActivation(), 256, 128);
-            var drop2 = new DropoutLayer(opt2, new SigmoidActivation(), 128, 0.01M);
-            var ln3 = new LinearLayer(opt2, new SigmoidActivation(), 128, 10);
+            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), 784, 256);
+            var drop1 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 0.05M);
+            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 128);
+            var drop2 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 0.01M);
+            var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 10);
 
-            var drops1 = new DropoutLayer(opt2, new SigmoidActivation(), l4.CountOfOutputNeurons, 0.05M);
-            var lin1 = new LinearLayer(opt2, new Activation(), l4.CountOfOutputNeurons, 64);
+            var drops1 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), l4.CountOfOutputNeurons, 0.05M);
+            var lin1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), l4.CountOfOutputNeurons, 64);
             Console.WriteLine(lin1.CountOfInputNeurons.ToString());
             
-            var lin2 = new LinearLayer(opt2, new SoftmaxActivation(), lin1.CountOfOutputNeurons, 10);
+            var lin2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SoftmaxActivation(), lin1.CountOfOutputNeurons, 10);
 
-            var sheduler = new ExponentialSheduler(opt2, 1M);
+            var sheduler = new ExponentialSheduler(new LeastSquareOptimizer(lr2), 1M);
             //var net = new Net(opt2, new Activation(), l1, l2, l3, l4, drops1, lin1, lin2);
-            var net = new Net(opt2, new Activation(), ln1, ln2, ln3);
+            var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2, ln3);
+            
 
             string[] lines = System.IO.File.ReadAllLines("D:\\source\\NNFramework\\mnist_test.csv");
             var testCount = lines.Length;
             var test_x = new decimal[testCount][];
             var test_y = new decimal[testCount][];
             var test_y_n = new int[testCount];
-            decimal down = 0.4M;
-            decimal up = 0.6M;
+            decimal down = 0.01M;
+            decimal up = 0.99M;
             for (int i = 0; i < testCount; i++)
             {
                 var data = lines[i].Split(',');
@@ -1704,7 +1709,7 @@ namespace NNFramework
                 }
                 test_x[i] = data_x;
             }
-            int dataSetLength = 10;
+            int dataSetLength = 2;
             for (int epoch = 0; epoch < 100; epoch++)
             {
                 if (epoch == 1) opt2.LearningRate = 0.05M;
