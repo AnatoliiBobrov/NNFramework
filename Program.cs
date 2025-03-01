@@ -43,6 +43,11 @@ namespace NNFramework
         /// <returns>decimal from 0 including to 1</returns>
         public static decimal NextPositive() => (decimal)Random.NextDouble();
 
+        /// <summary>
+        /// Shuffle array of integer values
+        /// </summary>
+        /// <param name="values">array of values</param>
+        public static void Shuffle(ref int[] values) => Random.Shuffle(values);
 
         /// <summary>
         /// Set seed for random generator. Use it before creation of NN
@@ -329,7 +334,6 @@ namespace NNFramework
                 var buffer = Neurons[i].Output - right[i];
                 Neurons[i].Error = buffer;
                 buffer *= buffer / 2;
-                Neurons[i].Error = buffer;
                 //Loss += Neurons[i].Error * Neurons[i].Error / 2;
                 loss += buffer;
             }
@@ -718,7 +722,6 @@ namespace NNFramework
         /// <param name="net">Current NN which possess current Neuron</param>
         public virtual void UpdateWeights()
         {
-            SetDerivative();
             var lr = OwnerLayer.Optimizer.LearningRate;
             foreach (Connection i in InputConnections)
                 i.UpdateWeight(lr, Derivative);
@@ -747,7 +750,6 @@ namespace NNFramework
 
         public override void UpdateWeights()
         {
-            SetDerivative();
             var lr = OwnerLayer.Optimizer.LearningRate / _devider;
             foreach (Connection i in InputConnections)
             {
@@ -872,6 +874,17 @@ namespace NNFramework
         }
 
         /// <summary>
+        /// Set derivatives to neurons
+        /// </summary>
+        private void setDerivatives()
+        {
+            ActivationFunction.SetDerivative();
+            Optimizer.SetDerivative();
+            foreach (Neuron neuron in Neurons)
+                neuron.SetDerivative();
+        }
+
+        /// <summary>
         /// Set errors of neurons
         /// </summary>
         /// <param name="right">Required outputs of layer</param>
@@ -882,6 +895,7 @@ namespace NNFramework
                 throw new NNException("Parameter 'right' size is not equal count of neurons");
 
             Optimizer.SetCriterionValue(right);
+            setDerivatives();
         }
         
         /// <summary>
@@ -890,6 +904,7 @@ namespace NNFramework
         public virtual void SetErrors()
         {
             foreach (Neuron neuron in Neurons) neuron.SetErrors();
+            setDerivatives();
         }
 
         /// <summary>
@@ -917,8 +932,6 @@ namespace NNFramework
         /// </summary>
         public virtual void UpdateWeights()
         {
-            ActivationFunction.SetDerivative();
-            Optimizer.SetDerivative();
             foreach (Neuron i in Neurons) i.UpdateWeights();
         }
 
@@ -1651,14 +1664,103 @@ namespace NNFramework
         }
     }
 
+    /// <summary>
+    /// Provides methods for data shuffle
+    /// </summary>
+    public class DataShuffler
+    {
+        /// <summary>
+        /// Data length
+        /// </summary>
+        private int _length;
+
+        /// <summary>
+        /// Current index
+        /// </summary>
+        private int _index;
+
+        /// <summary>
+        /// Indexes queue
+        /// </summary>
+        private int[] _indexes;
+
+        /// <summary>
+        /// Create new data shuffler
+        /// </summary>
+        /// <param name="lenght">data length</param>
+        /// <exception cref="NNException"></exception>
+        public DataShuffler(int lenght)
+        {
+            if (lenght < 2)
+                throw new NNException("Length must be more 1");
+
+            _length = lenght;
+            _indexes = new int[lenght];
+            for (int i = 0; i < lenght;  i++)
+                _indexes[i] = i;
+            RandomGenerator.Shuffle(ref _indexes);
+        }
+
+        /// <summary>
+        /// Return next index of data
+        /// </summary>
+        /// <returns>index of data</returns>
+        public int Next()
+        {
+            if (_index < _length)
+                return _indexes[_index++];
+            else return -1;
+        }
+
+        /// <summary>
+        /// Generate new queue of indexes and reset index to 0
+        /// </summary>
+        public void Update()
+        {
+            RandomGenerator.Shuffle(ref _indexes);
+            _index = 0;
+        }
+    }
+
     public class MyNet
+    {
+        public static void Main_Testing_BattleField()
+        {
+            RandomGenerator.SetSeed(0);
+            decimal lr2 = 0.3M;
+            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), 2, 3);
+            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 3, 2);
+            var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 2, 1);
+            var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2, ln3);
+            ln1.SetWeights([-1M, 2.5M, 1M, 1M, 0.4M, -1.5M]);
+            ln2.SetWeights([2.2M, 0.34M, -1.4M, 1.05M, 0.56M, 3.1M]);
+            ln3.SetWeights([0.75M, -0.22M]);
+
+            for (int epoch = 0; epoch < 1; epoch++)
+            {
+                var output = net.Output([0.6M, 0.7M]);
+                
+                net.ClearErrors();
+                net.SetErrors([0.9M]);
+                net.UpdateWeights();
+                foreach (Variable weight in ln1.Weights)
+                {
+                    Console.WriteLine(weight.Value.ToString() + " ");
+
+                }
+            }
+
+        }
+    }
+
+    public class MyNet1
     {
         public static void Main()
         {
             RandomGenerator.SetSeed(0);
             string Value = "";
             decimal lr1 = 5M;
-            decimal lr2 = 50M;
+            decimal lr2 = 0.05M;
             var opt2 = new LeastSquareOptimizer(lr2);
             var l1 = new ConvolutionLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), 28, 28, 1, 4, 16, 1, 1);
             var l2 = new MaxPoolingLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
@@ -1672,20 +1774,21 @@ namespace NNFramework
 
             var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), 784, 256);
             var drop1 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 0.05M);
-            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 128);
+            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 10);
             var drop2 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 0.01M);
-            var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 10);
+            //var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 64);
+            //var ln4 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 64, 10);
 
             var drops1 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), l4.CountOfOutputNeurons, 0.05M);
             var lin1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), l4.CountOfOutputNeurons, 64);
             Console.WriteLine(lin1.CountOfInputNeurons.ToString());
-            
+
             var lin2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SoftmaxActivation(), lin1.CountOfOutputNeurons, 10);
 
             var sheduler = new ExponentialSheduler(new LeastSquareOptimizer(lr2), 1M);
             //var net = new Net(opt2, new Activation(), l1, l2, l3, l4, drops1, lin1, lin2);
-            var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2, ln3);
-            
+            var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2);
+
 
             string[] lines = System.IO.File.ReadAllLines("D:\\source\\NNFramework\\mnist_test.csv");
             var testCount = lines.Length;
@@ -1709,7 +1812,9 @@ namespace NNFramework
                 }
                 test_x[i] = data_x;
             }
-            int dataSetLength = 2;
+            int dataSetLength = 1000;
+            DataShuffler dataShuffler = new(dataSetLength);
+
             for (int epoch = 0; epoch < 100; epoch++)
             {
                 if (epoch == 1) opt2.LearningRate = 0.05M;
@@ -1722,8 +1827,10 @@ namespace NNFramework
                 var score = 0;
                 stopw.Start();
                 decimal loss = 0;
-                for (int i = 0; i < dataSetLength; i++)
+                for (int i11 = 0; i11 < dataSetLength; i11++)
                 {
+                    int i = dataShuffler.Next();
+
                     var output = net.Output(test_x[i]);
                     var outputNumber = 0;
                     var outputValue = 0M;
@@ -1734,7 +1841,6 @@ namespace NNFramework
                         {
                             outputNumber = num;
                             outputValue = output[num];
-                            
                         }
                     }
 
@@ -1745,14 +1851,15 @@ namespace NNFramework
                     net.ClearErrors();
                     net.SetErrors(test_y[i]);
                     net.UpdateWeights();
-                    
+
                     //Console.WriteLine(i.ToString() + " " + opt.LearningRate.ToString());
                 }
                 loss /= dataSetLength;
                 sheduler.Step();
                 stopw.Stop();
 
-                Console.WriteLine(epoch.ToString() + " time: "+ stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
+                Console.WriteLine(epoch.ToString() + " time: " + stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
+                dataShuffler.Update();
             }
         }
     }
