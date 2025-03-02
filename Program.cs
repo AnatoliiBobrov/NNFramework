@@ -1,6 +1,4 @@
-﻿using System;
-using System.Diagnostics;
-using System.Security.AccessControl;
+﻿using System.Diagnostics;
 
 namespace NNFramework
 {
@@ -322,7 +320,7 @@ namespace NNFramework
     }
 
     /// <summary>
-    /// Optimize by least square's method
+    /// Provides least square methods
     /// </summary>
     public class LeastSquareOptimizer : Optimizer
     {
@@ -351,6 +349,41 @@ namespace NNFramework
         /// Create instance of optimizer
         /// </summary>
         public LeastSquareOptimizer(decimal lr) : base(lr)
+        {
+
+        }
+    }
+
+    /// <summary>
+    /// Provides cross entropy methods
+    /// </summary>
+    public class CrossEntropyOptimizer : Optimizer
+    {
+        private decimal[] _right;
+
+        public override void SetCriterionValue(decimal[] right)
+        {
+            _right = right;
+            var loss = 0M;
+            for (int i = 0; i < Neurons.Length; i++)
+            {
+                var buffer = - right[i] * (decimal)Math.Log((double)Neurons[i].Output);
+                Neurons[i].Error = buffer;
+                loss += buffer;
+            }
+            OwnerLayer.Loss = loss;
+        }
+
+        public override void SetDerivative()
+        {
+            for (int i = 0; i < Neurons.Length; i++)
+                Neurons[i].CriterionDerivative = -_right[i] / Neurons[i].Output;
+        }
+
+        /// <summary>
+        /// Create instance of optimizer
+        /// </summary>
+        public CrossEntropyOptimizer(decimal lr) : base(lr)
         {
 
         }
@@ -1691,8 +1724,8 @@ namespace NNFramework
         /// <exception cref="NNException"></exception>
         public DataShuffler(int lenght)
         {
-            if (lenght < 2)
-                throw new NNException("Length must be more 1");
+            if (lenght < 1)
+                throw new NNException("Length must be more 0");
 
             _length = lenght;
             _indexes = new int[lenght];
@@ -1759,7 +1792,7 @@ namespace NNFramework
         {
             RandomGenerator.SetSeed(0);
             string Value = "";
-            decimal lr1 = 5M;
+            decimal lr1 = 0.1M;
             decimal lr2 = 0.05M;
             var opt2 = new LeastSquareOptimizer(lr2);
             var l1 = new ConvolutionLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), 28, 28, 1, 4, 16, 1, 1);
@@ -1772,9 +1805,9 @@ namespace NNFramework
             //var ln2 = new LinearLayer(opt2, act, 784, 441);
             //var ln3 = new LinearLayer(opt2, act, 441, 10);
 
-            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), 784, 256);
+            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), 784, 128);
             var drop1 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 0.05M);
-            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 10);
+            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 10);
             var drop2 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 0.01M);
             //var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 64);
             //var ln4 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 64, 10);
@@ -1783,11 +1816,10 @@ namespace NNFramework
             var lin1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), l4.CountOfOutputNeurons, 64);
             Console.WriteLine(lin1.CountOfInputNeurons.ToString());
 
-            var lin2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SoftmaxActivation(), lin1.CountOfOutputNeurons, 10);
+            var lin2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), lin1.CountOfOutputNeurons, 10);
 
-            var sheduler = new ExponentialSheduler(new LeastSquareOptimizer(lr2), 1M);
-            //var net = new Net(opt2, new Activation(), l1, l2, l3, l4, drops1, lin1, lin2);
-            var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2);
+            var net = new Net(new CrossEntropyOptimizer(lr2), new SoftmaxActivation(), l1, l2, l3, l4, drops1, lin1, lin2);
+            //var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2);
 
 
             string[] lines = System.IO.File.ReadAllLines("D:\\source\\NNFramework\\mnist_test.csv");
@@ -1795,8 +1827,8 @@ namespace NNFramework
             var test_x = new decimal[testCount][];
             var test_y = new decimal[testCount][];
             var test_y_n = new int[testCount];
-            decimal down = 0.01M;
-            decimal up = 0.99M;
+            decimal down = 0.00M;
+            decimal up = 1M;
             for (int i = 0; i < testCount; i++)
             {
                 var data = lines[i].Split(',');
@@ -1812,7 +1844,7 @@ namespace NNFramework
                 }
                 test_x[i] = data_x;
             }
-            int dataSetLength = 1000;
+            int dataSetLength = 10;
             DataShuffler dataShuffler = new(dataSetLength);
 
             for (int epoch = 0; epoch < 100; epoch++)
@@ -1832,6 +1864,9 @@ namespace NNFramework
                     int i = dataShuffler.Next();
 
                     var output = net.Output(test_x[i]);
+                    //foreach (decimal iii in output)
+                    //    Console.Write(iii.ToString() + " ");
+                    //Console.WriteLine();
                     var outputNumber = 0;
                     var outputValue = 0M;
                     loss += net.Layers.Last().Loss;
@@ -1855,7 +1890,6 @@ namespace NNFramework
                     //Console.WriteLine(i.ToString() + " " + opt.LearningRate.ToString());
                 }
                 loss /= dataSetLength;
-                sheduler.Step();
                 stopw.Stop();
 
                 Console.WriteLine(epoch.ToString() + " time: " + stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
