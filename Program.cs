@@ -1,4 +1,117 @@
 ﻿using System.Diagnostics;
+using System.Threading;
+using System.Linq;
+using System.Runtime.InteropServices;
+using DistributedWorkManager;
+using static System.Runtime.InteropServices.JavaScript.JSType;
+
+// Thanks to Lenard Gunda
+// http://blog.rebuildall.net/2010/03/08/Running_NET_threads_on_selected_processor_cores
+namespace DistributedWorkManager
+{
+    public class DistributedThread
+    {
+        [DllImport("kernel32.dll")]
+        public static extern int GetCurrentThreadId();
+
+        [DllImport("kernel32.dll")]
+        public static extern int GetCurrentProcessorNumber();
+
+        private ThreadStart threadStart;
+
+        private ParameterizedThreadStart parameterizedThreadStart;
+
+        private Thread thread;
+
+        public int ProcessorAffinity { get; set; }
+
+        public Thread ManagedThread
+        {
+            get
+            {
+                return thread;
+            }
+        }
+
+        private DistributedThread()
+        {
+            thread = new Thread(DistributedThreadStart);
+        }
+
+        public DistributedThread(ThreadStart threadStart)
+            : this()
+        {
+            this.threadStart = threadStart;
+        }
+
+        public DistributedThread(ParameterizedThreadStart threadStart)
+            : this()
+        {
+            this.parameterizedThreadStart = threadStart;
+        }
+
+        public void Start()
+        {
+            if (this.threadStart == null) throw new InvalidOperationException();
+
+            thread.Start(null);
+        }
+
+        public void Start(object parameter)
+        {
+            if (this.parameterizedThreadStart == null) throw new InvalidOperationException();
+
+            thread.Start(parameter);
+        }
+
+        private void DistributedThreadStart(object parameter)
+        {
+            try
+            {
+                // fix to OS thread
+                Thread.BeginThreadAffinity();
+
+                // set affinity
+                if (ProcessorAffinity != 0)
+                {
+                    CurrentThread.ProcessorAffinity = new IntPtr(ProcessorAffinity);
+                }
+
+                // call real thread
+                if (this.threadStart != null)
+                {
+                    this.threadStart();
+                }
+                else if (this.parameterizedThreadStart != null)
+                {
+                    this.parameterizedThreadStart(parameter);
+                }
+                else
+                {
+                    throw new InvalidOperationException();
+                }
+            }
+            finally
+            {
+                // reset affinity
+                CurrentThread.ProcessorAffinity = new IntPtr(0xFFFF);
+                Thread.EndThreadAffinity();
+            }
+        }
+
+        private ProcessThread CurrentThread
+        {
+            get
+            {
+                int id = GetCurrentThreadId();
+                return
+                    (from ProcessThread th in Process.GetCurrentProcess().Threads
+                     where th.Id == id
+                     select th).Single();
+            }
+        }
+    }
+}
 
 namespace NNFramework
 {
@@ -60,6 +173,11 @@ namespace NNFramework
     public class Activation
     {
         /// <summary>
+        /// Minimal count of neurons in thread
+        /// </summary>
+        public static int ThreadMinimum = 250;
+
+        /// <summary>
         /// Indicates whether the optimizer is attached
         /// </summary>
         private bool _isAttached;
@@ -75,12 +193,71 @@ namespace NNFramework
         public Neuron[] Neurons;
 
         /// <summary>
+        /// Count of computational threads
+        /// </summary>
+        public int ThreadsCount = 1;
+
+        /// <summary>
+        /// Computational threads
+        /// </summary>
+        public Thread[] Threads;
+
+        /// <summary>
+        /// Bounds for computational threads
+        /// </summary>
+        public int[] TasksBounds;
+
+        /// <summary>
+        /// Task for thread
+        /// </summary>
+        public virtual void CalculateThread(int begin, int end)
+        {
+            for (int i = begin; i < end; i++)
+            {
+                Neuron neuron = Neurons[i];
+                neuron.Output = neuron.Input + neuron.Bias;
+            }
+        }
+
+        /// <summary>
         /// Calculate output values 
         /// </summary>
+        /// 
         public virtual void Calculate()
         {
-            foreach (Neuron neuron in Neurons)
-                neuron.Output = neuron.Input;
+            int proc = 2;
+            for (int i = 0; i < (ThreadsCount - 1); i++)
+            {
+                int t = i;
+
+                DistributedThread thread = new DistributedThread(() => CalculateThread(TasksBounds[t], TasksBounds[t + 1]));
+                thread.ProcessorAffinity = proc;
+                thread.ManagedThread.Priority = ThreadPriority.AboveNormal;
+                thread.ManagedThread.Name = "ThreadOnCPU1";
+                thread.Start();
+                proc *= 2;
+                Threads[i] = thread.ManagedThread;
+            }
+            CalculateThread(0, TasksBounds[0]);
+
+            foreach (Thread thread in Threads)
+            {
+                thread.Join();
+                Thread.EndThreadAffinity();
+            }
+                
+        }
+
+        /// <summary>
+        /// Task for thread
+        /// </summary>
+        public virtual void SetDerivativeeThread(int begin, int end)
+        {
+            for (int i = begin; i < end; i++)
+            {
+                Neuron neuron = Neurons[i];
+                neuron.ActivationDerivative = 1;
+            }
         }
 
         /// <summary>
@@ -88,22 +265,66 @@ namespace NNFramework
         /// </summary>
         public virtual void SetDerivative()
         {
-            foreach (Neuron neuron in Neurons)
-                neuron.ActivationDerivative = 1;
+            int proc = 2;
+            for (int i = 0; i < (ThreadsCount - 1); i++)
+            {
+                int t = i;
+
+                DistributedThread thread = new DistributedThread(() => SetDerivativeeThread(TasksBounds[t], TasksBounds[t + 1]));
+                thread.ProcessorAffinity = proc;
+                thread.ManagedThread.Priority = ThreadPriority.AboveNormal;
+                thread.ManagedThread.Name = "ThreadOnCPU1";
+                thread.Start();
+                proc *= 2;
+                Threads[i] = thread.ManagedThread;
+            }
+            SetDerivativeeThread(0, TasksBounds[0]);
+
+            foreach (Thread thread in Threads)
+            {
+                thread.Join();
+                Thread.EndThreadAffinity();
+            }
+        }
+
+        /// <summary>
+        /// Initialize computational threads
+        /// </summary>
+        /// <param name="countOfThreads">count of computational threads</param>
+        /// <exception cref="NNException"></exception>
+        private void initThreads(int countOfThreads)
+        {
+            if (countOfThreads < 1)
+                throw new NNException("Count of computational threads must be more 0");
+
+            ThreadsCount = countOfThreads;
+            int alternativeCount = (int)Math.Ceiling((decimal)Neurons.Length / ThreadMinimum);
+            if (alternativeCount < ThreadsCount)
+                ThreadsCount = alternativeCount;
+            TasksBounds = new int[ThreadsCount];
+            for (int i = 0; i < ThreadsCount; i++)
+            {
+                TasksBounds[i] = Neurons.Length * (i + 1) / ThreadsCount;
+            }
+            Threads = new Thread[ThreadsCount - 1];
         }
 
         /// <summary>
         /// Attach this activation function to layer
-        /// </summary>
         /// <param name="layer">Owner layer</param>
-        public virtual void Attache(Layer layer)
+        /// <param name="countOfThreads">count of computational threads</param>
+        /// </summary>
+        public virtual void Attache(Layer layer, int countOfThreads = 2)
         {
             ArgumentNullException.ThrowIfNull(layer, nameof(layer));
             if (_isAttached)
                 throw new NNException("This activation function is already attached");
-
-            _isAttached = true;
             Neurons = layer.Neurons;
+            if (Neurons == null)
+                throw new NNException("Layer has no neurons");
+
+            initThreads(countOfThreads);
+            _isAttached = true;
             OwnerLayer = layer;
         }
     }
@@ -113,17 +334,34 @@ namespace NNFramework
     /// </summary>
     public class SigmoidActivation : Activation
     {
-        public override void Calculate()
+        public override void SetDerivativeeThread(int begin, int end)
+        {
+            for (int i = begin; i < end; i++)
+            {
+                Neuron neuron = Neurons[i];
+                neuron.ActivationDerivative = neuron.Output * (1 - neuron.Output);
+            }
+        }
+
+        public override void CalculateThread(int begin, int end)
+        {
+            for (int i = begin; i < end; i++)
+            {
+                Neuron neuron = Neurons[i];
+                neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-neuron.Input - neuron.Bias))));
+            }
+        }
+        /*public override void Calculate()
         {
             foreach (Neuron neuron in Neurons)
-                neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * neuron.Input))));
+                neuron.Output = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(- neuron.Input - neuron.Bias))));
         }
-            
+
         public override void SetDerivative()
         {
             foreach (Neuron neuron in Neurons)
                 neuron.ActivationDerivative = neuron.Output * (1 - neuron.Output);
-        }
+        }*/
     }
 
     /// <summary>
@@ -142,11 +380,12 @@ namespace NNFramework
         /// <param name="value">negative rate</param>
         public LeakyReLUActivation(decimal value) => _value = value;
 
-        public override void Calculate()
+        public override void CalculateThread(int begin, int end)
         {
-            foreach (Neuron neuron in Neurons)
+            for (int i = begin; i < end; i++)
             {
-                decimal input = neuron.Input;
+                Neuron neuron = Neurons[i];
+                decimal input = neuron.Input + neuron.Bias;
                 if (input > 0) neuron.Output = input;
                 else neuron.Output = _value * input;
             }
@@ -156,7 +395,7 @@ namespace NNFramework
         {
             foreach (Neuron neuron in Neurons)
             {
-                if (neuron.Input > 0) neuron.ActivationDerivative = 1;
+                if (neuron.Input + neuron.Bias > 0) neuron.ActivationDerivative = 1;
                 else neuron.ActivationDerivative = _value;
             }
         }
@@ -171,7 +410,7 @@ namespace NNFramework
         {
             foreach (Neuron neuron in Neurons)
             {
-                decimal input = neuron.Input;
+                decimal input = neuron.Input + neuron.Bias;
                 if (input > 0) neuron.Output = input;
                 else neuron.Output = 0;
             }
@@ -181,7 +420,7 @@ namespace NNFramework
         {
             foreach (Neuron neuron in Neurons)
             {
-                if (neuron.Input > 0) neuron.ActivationDerivative = 1;
+                if (neuron.Input + neuron.Bias> 0) neuron.ActivationDerivative = 1;
                 else neuron.ActivationDerivative = 0;
             }
         }
@@ -217,7 +456,7 @@ namespace NNFramework
             _dinominator = 0;
             for (int i = 0; i < _countOfNeurons; i++)
             {
-                decimal numenator = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-1 * Neurons[i].Input))));
+                decimal numenator = (decimal)(1 / (1 + Math.Exp(decimal.ToDouble(-Neurons[i].Input - Neurons[i].Bias))));
                 _numenators[i] = numenator;
                 _dinominator += numenator;
             }
@@ -247,7 +486,7 @@ namespace NNFramework
                 throw new NNException("There was less than one category");
         }
 
-        public override void Attache(Layer layer)
+        public override void Attache(Layer layer, int threadsCount)
         {
             base.Attache(layer);
             _countOfNeurons = Neurons.Length;
@@ -260,6 +499,11 @@ namespace NNFramework
     /// </summary>
     public class Optimizer
     {
+        /// <summary>
+        /// SGD momentum
+        /// </summary>
+        public decimal Momentum;
+
         /// <summary>
         /// Indicates whether the optimizer is attached
         /// </summary>
@@ -348,9 +592,9 @@ namespace NNFramework
         /// <summary>
         /// Create instance of optimizer
         /// </summary>
-        public LeastSquareOptimizer(decimal lr) : base(lr)
+        public LeastSquareOptimizer(decimal lr, decimal momentum) : base(lr)
         {
-
+            Momentum = momentum;
         }
     }
 
@@ -559,6 +803,11 @@ namespace NNFramework
         public Variable Weight;
 
         /// <summary>
+        /// Past weight difference
+        /// </summary>
+        private decimal _deltaWeight = 0M;
+
+        /// <summary>
         /// Input neuron of current connection
         /// </summary>
         public Neuron Input;
@@ -606,8 +855,12 @@ namespace NNFramework
         /// </summary>
         /// <param name="lr">learning rate</param>
         /// <param name="derivative">derive of neuron's activation function</param>
-        public virtual void UpdateWeight(decimal lr, decimal derivative) =>
-            Weight.Value -= lr * derivative * Output.Output;
+        public virtual void UpdateWeight(decimal lr, decimal momentum, decimal derivative)
+        {
+            _deltaWeight = lr * derivative * Output.Output + _deltaWeight * momentum;
+            Weight.Value -= _deltaWeight;
+        }
+            
 
         /// <summary>
         /// Add value to next neuron
@@ -649,7 +902,7 @@ namespace NNFramework
         /// <param name="value">weight of connection</param>
         public UnteachableConnection(Neuron input, Neuron output, decimal value) : base(input, output, new Variable(value)) { }
 
-        public override void UpdateWeight(decimal lr, decimal derivative)
+        public override void UpdateWeight(decimal lr, decimal momentum, decimal derivative)
         {
         }
     }
@@ -668,6 +921,16 @@ namespace NNFramework
         /// Current input value of neuron
         /// </summary>
         public decimal Input = 0;
+
+        /// <summary>
+        /// Current bias
+        /// </summary>
+        public decimal Bias;
+
+        /// <summary>
+        /// Current bias
+        /// </summary>
+        private decimal _deltaBias = 0;
 
         /// <summary>
         /// Current activation derivative of neuron
@@ -756,9 +1019,18 @@ namespace NNFramework
         public virtual void UpdateWeights()
         {
             var lr = OwnerLayer.Optimizer.LearningRate;
+            var mom = OwnerLayer.Optimizer.Momentum;
+            _deltaBias = lr * Derivative + _deltaBias * mom;
+            Bias -= _deltaBias;
             foreach (Connection i in InputConnections)
-                i.UpdateWeight(lr, Derivative);
+                i.UpdateWeight(lr, mom,  Derivative);
         }      
+
+        /// <summary>
+        /// Create new neuron
+        /// </summary>
+        /// <param name="setBias">indicates whether set bias</param>
+        public Neuron(bool setBias) => Bias = setBias ? RandomGenerator.Next() : 0;
     }
 
     /// <summary>
@@ -775,7 +1047,7 @@ namespace NNFramework
         /// Create instance ot neuron 
         /// </summary>
         /// <param name="function">Logistic function</param>
-        public ConvolutionalNeuron(int devider)
+        public ConvolutionalNeuron(int devider, bool setBias) : base(setBias)
         {
             if (devider < 1) throw new NNException("Devider must be more then 1");
             _devider = devider;
@@ -784,9 +1056,10 @@ namespace NNFramework
         public override void UpdateWeights()
         {
             var lr = OwnerLayer.Optimizer.LearningRate / _devider;
+            var mom = OwnerLayer.Optimizer.Momentum;
             foreach (Connection i in InputConnections)
             {
-                i.UpdateWeight(lr, Derivative);
+                i.UpdateWeight(lr, mom, Derivative);
             }
         }
     }
@@ -981,8 +1254,7 @@ namespace NNFramework
         /// Create new layer
         /// </summary>
         /// <param name="isOutput">Indicates whether this layer is output</param>
-        public Layer(bool isOutput)
-            => IsOutput = isOutput;
+        public Layer(bool isOutput) => IsOutput = isOutput;
     }
 
     /// <summary>
@@ -998,7 +1270,7 @@ namespace NNFramework
         /// <param name="inputSize">count of neurons</param>
         /// <param name="outputSize">count of neurons in next layer</param>
         /// <exception cref="NNException"></exception>
-        public LinearLayer(Optimizer optimizer, Activation function, int inputSize, int outputSize, bool isOutput = false) : base(isOutput)
+        public LinearLayer(Optimizer optimizer, Activation function, int inputSize, int outputSize, bool isOutput = false, bool setBias = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1015,7 +1287,7 @@ namespace NNFramework
             Outputs = new Variable[outputSize];
             for (int i = 0; i < outputSize; i++) Outputs[i] = new Variable(0);
             Neurons = new Neuron[inputSize];
-            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron();
+            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron(setBias);
             ActivationFunction.Attache(this);
             optimizer.Attache(this);
         }
@@ -1061,7 +1333,7 @@ namespace NNFramework
         /// <param name="function">activation function of all neurons of layer</param>
         /// <param name="inputSize">count of neurons</param>
         /// <param name="probability">dropout probability</param>
-        public DropoutLayer(Optimizer optimizer, Activation function, int inputSize, decimal probability = 0.2M, bool isOutput = false) : base(isOutput)
+        public DropoutLayer(Optimizer optimizer, Activation function, int inputSize, decimal probability = 0.2M, bool isOutput = false, bool setBias = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1077,7 +1349,7 @@ namespace NNFramework
             Size = [inputSize];
 
             Neurons = new Neuron[inputSize];
-            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron();
+            for (int i = 0; i < inputSize; i++) Neurons[i] = new Neuron(setBias);
             ActivationFunction = function;
             ActivationFunction.Attache(this);
             optimizer.Attache(this);
@@ -1169,7 +1441,7 @@ namespace NNFramework
         /// <param name="countOfMasks">count of mask per channel</param>
         /// <param name="stride">stride of convolution</param>
         /// <param name="padding">zero padding of edges</param>
-        public ConvolutionLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int maskSize = 3, int countOfMasks = 3, int stride = 1, int padding = 0, bool isOutput = false) : base(isOutput)
+        public ConvolutionLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int maskSize = 3, int countOfMasks = 3, int stride = 1, int padding = 0, bool isOutput = false, bool setBias = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1190,7 +1462,7 @@ namespace NNFramework
             Size = [countOfChannels, countOfRows, countOfColumns];
             Neurons = new Neuron[CountOfInputNeurons];
             for (int i = 0; i < CountOfInputNeurons; i++)
-                Neurons[i] = new ConvolutionalNeuron(countInOutputChannel);
+                Neurons[i] = new ConvolutionalNeuron(countInOutputChannel, setBias);
             ActivationFunction = function;
             ActivationFunction.Attache(this);
             optimizer.Attache(this);
@@ -1313,7 +1585,7 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public PoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base(isOutput)
+        public PoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false, bool setBias = false) : base(isOutput)
         {
             ArgumentNullException.ThrowIfNull(optimizer, nameof(optimizer));
             ArgumentNullException.ThrowIfNull(function, nameof(function));
@@ -1368,10 +1640,10 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public MaxPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput)
+        public MaxPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false, bool setBias = false) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput, setBias)
         {
             for (int i = 0; i < CountOfInputNeurons; i++)
-                Neurons[i] = new Neuron();
+                Neurons[i] = new Neuron(setBias);
             ActivationFunction = function;
             ActivationFunction.Attache(this);
             optimizer.Attache(this);
@@ -1480,10 +1752,10 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public SumPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base(optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput)
+        public SumPoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false, bool setBias = false) : base(optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput, setBias)
         {
             for (int i = 0; i < CountOfInputNeurons; i++)
-                Neurons[i] = new Neuron();
+                Neurons[i] = new Neuron(setBias);
             ActivationFunction = function;
             ActivationFunction.Attache(this);
             optimizer.Attache(this);
@@ -1560,7 +1832,7 @@ namespace NNFramework
         /// <param name="countOfChannels">count of input channels</param>
         /// <param name="poolingArea">size of cide of pooling square</param>
         /// <exception cref="NNException"></exception>
-        public AveragePoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput)
+        public AveragePoolingLayer(Optimizer optimizer, Activation function, int countOfRows, int countOfColumns, int countOfChannels = 1, int poolingArea = 2, bool isOutput = false, bool setBias = false) : base (optimizer, function, countOfRows, countOfColumns, countOfChannels, poolingArea, isOutput, setBias)
         {
         }
 
@@ -1588,7 +1860,7 @@ namespace NNFramework
         /// <param name="lastOptimizer">Optimization algorithm of output layer</param>
         /// <param name="lastActivation">Activation function of output layer</param>
         /// <param name="layers">Layers of NN</param>
-        public Net(Optimizer lastOptimizer, Activation lastActivation, params Layer[] layers)
+        public Net(Optimizer lastOptimizer, Activation lastActivation, bool setBias, params Layer[] layers)
         {
             ArgumentNullException.ThrowIfNull(lastActivation, nameof(lastActivation));
             for (int begin = 0; begin < layers.Length - 1; begin++)
@@ -1617,7 +1889,7 @@ namespace NNFramework
                 Layers[i].InitializeConnections(Layers[i + 1]);
             Layer lastLayer = Layers.Last();
             int lOutputs = lastLayer.CountOfOutputNeurons;
-            LinearLayer newLast = new(lastOptimizer, lastActivation, lOutputs, lOutputs, true);
+            LinearLayer newLast = new(lastOptimizer, lastActivation, lOutputs, lOutputs, true, setBias);
             lastLayer.InitializeConnections(newLast);
             Layers.Add(newLast);
             foreach (Layer layer in Layers) layer.SetOwnerLayer();
@@ -1761,10 +2033,10 @@ namespace NNFramework
         {
             RandomGenerator.SetSeed(0);
             decimal lr2 = 0.3M;
-            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), 2, 3);
-            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 3, 2);
-            var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 2, 1);
-            var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2, ln3);
+            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2, 0), new Activation(), 2, 3);
+            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2, 0), new SigmoidActivation(), 3, 2);
+            var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2, 0), new SigmoidActivation(), 2, 1);
+            var net = new Net(new LeastSquareOptimizer(lr2, 0), new SigmoidActivation(), true, ln1, ln2, ln3);
             ln1.SetWeights([-1M, 2.5M, 1M, 1M, 0.4M, -1.5M]);
             ln2.SetWeights([2.2M, 0.34M, -1.4M, 1.05M, 0.56M, 3.1M]);
             ln3.SetWeights([0.75M, -0.22M]);
@@ -1788,38 +2060,69 @@ namespace NNFramework
 
     public class MyNet1
     {
+        
+        public static void SetLR(Net net, decimal lr)
+        {
+            foreach (Layer layer in net.Layers)
+            {
+                layer.Optimizer.LearningRate = lr;
+            }
+        }
         public static void Main()
         {
+            DistributedThread thread = new DistributedThread(Main1);
+            thread.ProcessorAffinity = 1;
+            thread.ManagedThread.Priority = ThreadPriority.Highest;
+            thread.ManagedThread.Name = "ThreadOnCPU1";
+            thread.Start();
+        }
+
+        public static void Main1()
+        {
             RandomGenerator.SetSeed(0);
+            int bestLossEpoch = 0;
+            decimal bestLoss = decimal.MaxValue;
+            int bestScoreEpoch = 0;
+            int bestScore = 0;
+
             string Value = "";
-            decimal lr1 = 0.1M;
-            decimal lr2 = 0.05M;
-            var opt2 = new LeastSquareOptimizer(lr2);
-            var l1 = new ConvolutionLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), 28, 28, 1, 4, 16, 1, 1);
-            var l2 = new MaxPoolingLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
-            var l3 = new ConvolutionLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 8, 1, 1);
-            var l4 = new MaxPoolingLayer(new LeastSquareOptimizer(lr1), new SigmoidActivation(), l3.OutputRows, l3.OutputColumns, l3.CountOfOutputChannels, 2);
+            decimal lr1 = 0.00001M;
+            decimal lr2 = 0.1M;
+            decimal momentum = 0.6M;
+            int dataSetLength = 1000;
+            int epochs = 10;
+            DataShuffler dataShuffler = new(dataSetLength);
+
+            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new Activation(), 784, 500, false, false);
+            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), 500, 256, false, false);
+            var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), 256, 128, false, false);
+            var ln4 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), 128, 10, false, false);
+            var net = new Net(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), false, ln1, ln2, ln3, ln4);
+
+            var opt2 = new LeastSquareOptimizer(lr2, momentum);
+            var l1 = new ConvolutionLayer(new LeastSquareOptimizer(lr1, momentum), new SigmoidActivation(), 28, 28, 1, 4, 16, 1, 1);
+            var l2 = new MaxPoolingLayer(new LeastSquareOptimizer(lr1, momentum), new SigmoidActivation(), l1.OutputRows, l1.OutputColumns, l1.CountOfOutputChannels, 2);
+            var l3 = new ConvolutionLayer(new LeastSquareOptimizer(lr1, momentum), new SigmoidActivation(), l2.OutputRows, l2.OutputColumns, l1.CountOfOutputChannels, 3, 8, 1, 1);
+            var l4 = new MaxPoolingLayer(new LeastSquareOptimizer(lr1, momentum), new SigmoidActivation(), l3.OutputRows, l3.OutputColumns, l3.CountOfOutputChannels, 2);
             //var l5 = new ConvolutionLayer(opt1, act, l4.OutputRows, l4.OutputColumns, l3.CountOfOutputChannels, 3, 3, 1, 1);
             //var l6 = new MaxPoolingLayer(opt1, act, l5.OutputRows, l5.OutputColumns, l5.CountOfOutputChannels, 2);
             //var ln1 = new LinearLayer(opt2, act, 784, 784);
             //var ln2 = new LinearLayer(opt2, act, 784, 441);
             //var ln3 = new LinearLayer(opt2, act, 441, 10);
-
-            var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), 784, 128);
-            var drop1 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 256, 0.05M);
-            var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 10);
-            var drop2 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 0.01M);
+           
+            //var drop1 = new DropoutLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), 256, 0.05M);
+            //var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), 128, 10, false, false);
+            //var drop2 = new DropoutLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), 128, 0.01M);
             //var ln3 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 128, 64);
             //var ln4 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), 64, 10);
 
-            var drops1 = new DropoutLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), l4.CountOfOutputNeurons, 0.05M);
-            var lin1 = new LinearLayer(new LeastSquareOptimizer(lr2), new Activation(), l4.CountOfOutputNeurons, 64);
+            var drops1 = new DropoutLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), l4.CountOfOutputNeurons, 0.05M);
+            var lin1 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new Activation(), l4.CountOfOutputNeurons, 64);
             Console.WriteLine(lin1.CountOfInputNeurons.ToString());
 
-            var lin2 = new LinearLayer(new LeastSquareOptimizer(lr2), new SigmoidActivation(), lin1.CountOfOutputNeurons, 10);
+            var lin2 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), lin1.CountOfOutputNeurons, 10);
 
-            var net = new Net(new CrossEntropyOptimizer(lr2), new SoftmaxActivation(), l1, l2, l3, l4, drops1, lin1, lin2);
-            //var net = new Net(new LeastSquareOptimizer(lr2), new SigmoidActivation(), ln1, ln2);
+            //var net = new Net(new CrossEntropyOptimizer(lr2), new SoftmaxActivation(), l1, l2, l3, l4, drops1, lin1, lin2);
 
 
             string[] lines = System.IO.File.ReadAllLines("D:\\source\\NNFramework\\mnist_test.csv");
@@ -1827,8 +2130,11 @@ namespace NNFramework
             var test_x = new decimal[testCount][];
             var test_y = new decimal[testCount][];
             var test_y_n = new int[testCount];
-            decimal down = 0.00M;
-            decimal up = 1M;
+            
+
+
+            decimal down = 0.01M;
+            decimal up = 0.99M;
             for (int i = 0; i < testCount; i++)
             {
                 var data = lines[i].Split(',');
@@ -1840,21 +2146,19 @@ namespace NNFramework
                 var data_x = new decimal[784];
                 for (int j = 1; j < 785; j++)
                 {
-                    data_x[j - 1] = decimal.Parse(data[j]) / 255;
+                    data_x[j - 1] = (decimal.Parse(data[j]) / 255);
                 }
                 test_x[i] = data_x;
             }
-            int dataSetLength = 10;
-            DataShuffler dataShuffler = new(dataSetLength);
 
-            for (int epoch = 0; epoch < 100; epoch++)
+            for (int epoch = 0; epoch < epochs; epoch++)
             {
-                if (epoch == 1) opt2.LearningRate = 0.05M;
-                if (epoch == 8) opt2.LearningRate = 0.02M;
-                if (epoch == 15) opt2.LearningRate = 0.01M;
-                if (epoch == 30) opt2.LearningRate = 0.005M;
-                if (epoch == 40) opt2.LearningRate = 0.002M;
-                if (epoch == 50) opt2.LearningRate = 0.001M;
+                if (epoch == 1) SetLR(net, 0.05M);
+                //if (epoch == 15) SetLR(net, 0.02M);
+                //if (epoch == 30) SetLR(net, 0.01M);
+                //if (epoch == 50) SetLR(net, 0.005M);
+                //if (epoch == 60) SetLR(net, 0.002M);
+                //if (epoch == 70) SetLR(net, 0.001M);
                 var stopw = new Stopwatch();
                 var score = 0;
                 stopw.Start();
@@ -1862,14 +2166,12 @@ namespace NNFramework
                 for (int i11 = 0; i11 < dataSetLength; i11++)
                 {
                     int i = dataShuffler.Next();
-
                     var output = net.Output(test_x[i]);
                     //foreach (decimal iii in output)
                     //    Console.Write(iii.ToString() + " ");
                     //Console.WriteLine();
                     var outputNumber = 0;
                     var outputValue = 0M;
-                    loss += net.Layers.Last().Loss;
                     for (int num = 0; num < 10; num++)
                     {
                         if (outputValue < output[num])
@@ -1885,6 +2187,73 @@ namespace NNFramework
 
                     net.ClearErrors();
                     net.SetErrors(test_y[i]);
+                    loss += net.Layers.Last().Loss;
+
+                    net.UpdateWeights();
+
+                    //Console.WriteLine(i.ToString() + " " + opt.LearningRate.ToString());
+                }
+                loss /= dataSetLength;
+                stopw.Stop();
+                
+                Console.Write(epoch.ToString() + " time: " + stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
+                
+                if (bestLoss > loss)
+                {
+                    bestLoss = loss;
+                    bestLossEpoch = epoch;
+                    Console.Write(" bestLoss --");
+                }
+                if (bestScore < score)
+                {
+                    bestScore = score;
+                    bestScoreEpoch = epoch;
+                    Console.Write(" bestScore ++");
+                }
+                Console.WriteLine();
+                dataShuffler.Update();
+            }
+            var acct = new Activation();
+            ln1.ActivationFunction = acct;
+            acct.Attache(ln1, 1);
+            for (int epoch = 0; epoch < epochs; epoch++)
+            {
+                if (epoch == 1) SetLR(net, 0.05M);
+                //if (epoch == 15) SetLR(net, 0.02M);
+                //if (epoch == 30) SetLR(net, 0.01M);
+                //if (epoch == 50) SetLR(net, 0.005M);
+                //if (epoch == 60) SetLR(net, 0.002M);
+                //if (epoch == 70) SetLR(net, 0.001M);
+                var stopw = new Stopwatch();
+                var score = 0;
+                stopw.Start();
+                decimal loss = 0;
+                for (int i11 = 0; i11 < dataSetLength; i11++)
+                {
+                    int i = dataShuffler.Next();
+                    var output = net.Output(test_x[i]);
+                    //foreach (decimal iii in output)
+                    //    Console.Write(iii.ToString() + " ");
+                    //Console.WriteLine();
+                    var outputNumber = 0;
+                    var outputValue = 0M;
+                    for (int num = 0; num < 10; num++)
+                    {
+                        if (outputValue < output[num])
+                        {
+                            outputNumber = num;
+                            outputValue = output[num];
+                        }
+                    }
+
+                    //Console.WriteLine(outputNumber.ToString() + " " + test_y_n[i]);
+                    if (outputNumber == test_y_n[i])
+                        score++;
+
+                    net.ClearErrors();
+                    net.SetErrors(test_y[i]);
+                    loss += net.Layers.Last().Loss;
+
                     net.UpdateWeights();
 
                     //Console.WriteLine(i.ToString() + " " + opt.LearningRate.ToString());
@@ -1892,7 +2261,21 @@ namespace NNFramework
                 loss /= dataSetLength;
                 stopw.Stop();
 
-                Console.WriteLine(epoch.ToString() + " time: " + stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
+                Console.Write(epoch.ToString() + " time: " + stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
+
+                if (bestLoss > loss)
+                {
+                    bestLoss = loss;
+                    bestLossEpoch = epoch;
+                    Console.Write(" bestLoss --");
+                }
+                if (bestScore < score)
+                {
+                    bestScore = score;
+                    bestScoreEpoch = epoch;
+                    Console.Write(" bestScore ++");
+                }
+                Console.WriteLine();
                 dataShuffler.Update();
             }
         }
