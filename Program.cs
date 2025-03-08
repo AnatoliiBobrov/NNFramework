@@ -4,6 +4,8 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using DistributedWorkManager;
 using static System.Runtime.InteropServices.JavaScript.JSType;
+using static System.Formats.Asn1.AsnWriter;
+using System.Net.NetworkInformation;
 
 // Thanks to Lenard Gunda
 // http://blog.rebuildall.net/2010/03/08/Running_NET_threads_on_selected_processor_cores
@@ -175,7 +177,7 @@ namespace NNFramework
         /// <summary>
         /// Minimal count of neurons in thread
         /// </summary>
-        public static int ThreadMinimum = 250;
+        public static int ThreadMinimum = 5000;
 
         /// <summary>
         /// Indicates whether the optimizer is attached
@@ -2068,13 +2070,84 @@ namespace NNFramework
                 layer.Optimizer.LearningRate = lr;
             }
         }
+        private static void circle()
+        {
+            //Thread.Sleep(1000);
+            //var stopw = new Stopwatch();
+            //stopw.Start();
+            /*
+            for (int x = 0; x < 10; x++)
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    var a = i - 1;
+                    var b = a / (2 * i + 1);
+                    var stw = Math.Exp((double)b);
+
+                }
+            }
+            */
+            //stopw.Stop();
+
+            //Console.Write(stopw.Elapsed.ToString());
+        }
+
         public static void Main()
         {
+            /*
+            for (int i = 0; i < 10; i++)
+            {
+                DistributedThread thread = new DistributedThread(Main__);
+                thread.ProcessorAffinity = 1;
+                thread.ManagedThread.Priority = ThreadPriority.Highest;
+                thread.ManagedThread.Name = "ThreadOnCPU1";
+                thread.Start();
+                thread.ManagedThread.Join();
+
+            }
+            
+            DistributedThread thread = new DistributedThread(Main1);
+            thread.ProcessorAffinity = 1;
+            
+            thread.Start(); 
+            */
             DistributedThread thread = new DistributedThread(Main1);
             thread.ProcessorAffinity = 1;
             thread.ManagedThread.Priority = ThreadPriority.Highest;
             thread.ManagedThread.Name = "ThreadOnCPU1";
             thread.Start();
+        }
+
+        public static void Main___()
+        {
+            for (int i = 0; i < 100; i++)
+            {
+                var StartTime = DateTime.Now;
+                //DistributedThread thread = new DistributedThread(circle);
+                //thread.ProcessorAffinity = 2;
+                //thread.ManagedThread.Priority = ThreadPriority.Highest;
+                //thread.ManagedThread.Name = "ThreadOnCPU2";
+                //thread.Start();
+                //thread.ManagedThread.Join();
+                TimeSpan ts = DateTime.Now.Subtract(StartTime);
+                string elapsedTime = string.Format("{0:00}:{1:00}:{2:00}.{3:000}",
+                        ts.Hours, ts.Minutes, ts.Seconds,
+                        ts.Milliseconds);
+                Console.WriteLine(elapsedTime);
+
+            }
+            /*
+            DistributedThread thread = new DistributedThread(Main1);
+            thread.ProcessorAffinity = 1;
+            
+            thread.Start(); 
+            */
+            /*DistributedThread thread = new DistributedThread(Main1);
+            thread.ProcessorAffinity = 1;
+            thread.ManagedThread.Priority = ThreadPriority.Highest;
+            thread.ManagedThread.Name = "ThreadOnCPU1";
+            thread.Start();
+            */
         }
 
         public static void Main1()
@@ -2085,13 +2158,14 @@ namespace NNFramework
             int bestScoreEpoch = 0;
             int bestScore = 0;
 
-            string Value = "";
             decimal lr1 = 0.00001M;
             decimal lr2 = 0.1M;
             decimal momentum = 0.6M;
             int dataSetLength = 1000;
-            int epochs = 10;
+            int epochs = 120;
             DataShuffler dataShuffler = new(dataSetLength);
+
+            
 
             var ln1 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new Activation(), 784, 500, false, false);
             var ln2 = new LinearLayer(new LeastSquareOptimizer(lr2, momentum), new SigmoidActivation(), 500, 256, false, false);
@@ -2130,8 +2204,8 @@ namespace NNFramework
             var test_x = new decimal[testCount][];
             var test_y = new decimal[testCount][];
             var test_y_n = new int[testCount];
-            
 
+            
 
             decimal down = 0.01M;
             decimal up = 0.99M;
@@ -2153,20 +2227,84 @@ namespace NNFramework
 
             for (int epoch = 0; epoch < epochs; epoch++)
             {
-                if (epoch == 1) SetLR(net, 0.05M);
+                if (epoch == 0)
+                {
+                    SetLR(net, 0M);
+                    net.Layers.Last().Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 10)
+                {
+                    SetLR(net, 0M);
+                    ln4.Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 20)
+                {
+                    SetLR(net, 0M);
+                    ln3.Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 30)
+                {
+                    SetLR(net, 0M);
+                    ln2.Optimizer.LearningRate = 0.05M;
+                }
+
+                if (epoch == 40)
+                {
+                    SetLR(net, 0M);
+                    net.Layers.Last().Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 50)
+                {
+                    SetLR(net, 0M);
+                    ln4.Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 60)
+                {
+                    SetLR(net, 0M);
+                    ln3.Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 70)
+                {
+                    SetLR(net, 0M);
+                    ln2.Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 80)
+                {
+                    SetLR(net, 0M);
+                    net.Layers.Last().Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 90)
+                {
+                    SetLR(net, 0M);
+                    ln4.Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 100)
+                {
+                    SetLR(net, 0M);
+                    ln3.Optimizer.LearningRate = 0.05M;
+                }
+                if (epoch == 110)
+                {
+                    SetLR(net, 0M);
+                    ln2.Optimizer.LearningRate = 0.05M;
+                }
+
+
+                //if (epoch == 1) SetLR(net, 0.05M);
                 //if (epoch == 15) SetLR(net, 0.02M);
                 //if (epoch == 30) SetLR(net, 0.01M);
                 //if (epoch == 50) SetLR(net, 0.005M);
                 //if (epoch == 60) SetLR(net, 0.002M);
                 //if (epoch == 70) SetLR(net, 0.001M);
-                var stopw = new Stopwatch();
+                DateTime StartTime = DateTime.Now;
                 var score = 0;
-                stopw.Start();
                 decimal loss = 0;
                 for (int i11 = 0; i11 < dataSetLength; i11++)
                 {
                     int i = dataShuffler.Next();
                     var output = net.Output(test_x[i]);
+                    
+
                     //foreach (decimal iii in output)
                     //    Console.Write(iii.ToString() + " ");
                     //Console.WriteLine();
@@ -2188,80 +2326,18 @@ namespace NNFramework
                     net.ClearErrors();
                     net.SetErrors(test_y[i]);
                     loss += net.Layers.Last().Loss;
-
                     net.UpdateWeights();
+
 
                     //Console.WriteLine(i.ToString() + " " + opt.LearningRate.ToString());
                 }
                 loss /= dataSetLength;
-                stopw.Stop();
-                
-                Console.Write(epoch.ToString() + " time: " + stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
-                
-                if (bestLoss > loss)
-                {
-                    bestLoss = loss;
-                    bestLossEpoch = epoch;
-                    Console.Write(" bestLoss --");
-                }
-                if (bestScore < score)
-                {
-                    bestScore = score;
-                    bestScoreEpoch = epoch;
-                    Console.Write(" bestScore ++");
-                }
-                Console.WriteLine();
-                dataShuffler.Update();
-            }
-            var acct = new Activation();
-            ln1.ActivationFunction = acct;
-            acct.Attache(ln1, 1);
-            for (int epoch = 0; epoch < epochs; epoch++)
-            {
-                if (epoch == 1) SetLR(net, 0.05M);
-                //if (epoch == 15) SetLR(net, 0.02M);
-                //if (epoch == 30) SetLR(net, 0.01M);
-                //if (epoch == 50) SetLR(net, 0.005M);
-                //if (epoch == 60) SetLR(net, 0.002M);
-                //if (epoch == 70) SetLR(net, 0.001M);
-                var stopw = new Stopwatch();
-                var score = 0;
-                stopw.Start();
-                decimal loss = 0;
-                for (int i11 = 0; i11 < dataSetLength; i11++)
-                {
-                    int i = dataShuffler.Next();
-                    var output = net.Output(test_x[i]);
-                    //foreach (decimal iii in output)
-                    //    Console.Write(iii.ToString() + " ");
-                    //Console.WriteLine();
-                    var outputNumber = 0;
-                    var outputValue = 0M;
-                    for (int num = 0; num < 10; num++)
-                    {
-                        if (outputValue < output[num])
-                        {
-                            outputNumber = num;
-                            outputValue = output[num];
-                        }
-                    }
-
-                    //Console.WriteLine(outputNumber.ToString() + " " + test_y_n[i]);
-                    if (outputNumber == test_y_n[i])
-                        score++;
-
-                    net.ClearErrors();
-                    net.SetErrors(test_y[i]);
-                    loss += net.Layers.Last().Loss;
-
-                    net.UpdateWeights();
-
-                    //Console.WriteLine(i.ToString() + " " + opt.LearningRate.ToString());
-                }
-                loss /= dataSetLength;
-                stopw.Stop();
-
-                Console.Write(epoch.ToString() + " time: " + stopw.Elapsed.ToString() + " loss: " + loss + " score: " + score.ToString());
+                TimeSpan ts = DateTime.Now.Subtract(StartTime);
+                string elapsedTime = string.Format("{0:00}:{1:00}:{2:00}.{3:000}",
+                        ts.Hours, ts.Minutes, ts.Seconds,
+                        ts.Milliseconds);
+                Console.Write(epoch.ToString() + " loss: " + loss + " score: " + score.ToString() + " ");
+                Console.Write(elapsedTime, "RunTime");
 
                 if (bestLoss > loss)
                 {
@@ -2278,6 +2354,7 @@ namespace NNFramework
                 Console.WriteLine();
                 dataShuffler.Update();
             }
+            
         }
     }
 }
